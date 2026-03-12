@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"seshat/internal/config"
+	"github.com/tardanoir/seshat/internal/config"
 )
 
 type SavedQuery struct {

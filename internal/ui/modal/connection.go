@@ -5,8 +5,8 @@ import (
 	"sort"
 	"strings"
 
-	"seshat/internal/config"
-	"seshat/internal/ui/style"
+	"github.com/tardanoir/seshat/internal/config"
+	"github.com/tardanoir/seshat/internal/ui/style"
 
 	"charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"

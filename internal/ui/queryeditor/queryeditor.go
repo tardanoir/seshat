@@ -5,7 +5,7 @@ import (
 	"regexp"
 	"strings"
 
-	"seshat/internal/ui/style"
+	"github.com/tardanoir/seshat/internal/ui/style"
 
 	tea "charm.land/bubbletea/v2"
 )

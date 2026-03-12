@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"seshat/internal/ui/style"
+	"github.com/tardanoir/seshat/internal/ui/style"
 
 	"charm.land/lipgloss/v2"
 )

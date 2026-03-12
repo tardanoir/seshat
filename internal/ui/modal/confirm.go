@@ -1,7 +1,7 @@
 package modal
 
 import (
-	"seshat/internal/ui/style"
+	"github.com/tardanoir/seshat/internal/ui/style"
 
 	"charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"

@@ -1,4 +1,4 @@
-module seshat
+module github.com/tardanoir/seshat
 
 go 1.25.5
 

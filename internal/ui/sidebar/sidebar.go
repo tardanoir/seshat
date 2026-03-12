@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"strings"
 
-	"seshat/internal/query"
-	"seshat/internal/ui/style"
+	"github.com/tardanoir/seshat/internal/query"
+	"github.com/tardanoir/seshat/internal/ui/style"
 
 	tea "charm.land/bubbletea/v2"
 )

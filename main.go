@@ -4,9 +4,9 @@ import (
 	"fmt"
 	"os"
 
-	"seshat/internal/config"
-	"seshat/internal/ui"
-	"seshat/internal/ui/style"
+	"github.com/tardanoir/seshat/internal/config"
+	"github.com/tardanoir/seshat/internal/ui"
+	"github.com/tardanoir/seshat/internal/ui/style"
 
 	tea "charm.land/bubbletea/v2"
 )
