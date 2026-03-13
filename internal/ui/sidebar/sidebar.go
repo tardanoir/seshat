@@ -3,7 +3,6 @@ package sidebar
 import (
 	"fmt"
 	"strings"
-	"time"
 
 	"github.com/tardanoir/seshat/internal/query"
 	"github.com/tardanoir/seshat/internal/ui/style"
@@ -217,7 +216,7 @@ func (m Model) handleDelete() (Model, tea.Cmd) {
 }
 
 func (m Model) View() string {
-	innerW := m.width - 4 // outer border(2) + padding(2)
+	innerW := m.width - 6 // please work
 	if innerW < 4 {
 		innerW = 4
 	}
@@ -301,7 +300,7 @@ func (m Model) View() string {
 	if m.focused {
 		s = style.Focused
 	}
-	return s.Width(m.width - 2).Render(content)
+	return s.Width(m.width - 2).Height(innerH).Render(content)
 }
 
 func (m Model) sectionTitle(sec Section) string {
@@ -319,9 +318,6 @@ func (m Model) sectionTitle(sec Section) string {
 }
 
 func (m Model) cursorToVisualLine(sec Section) int {
-	if sec == SectionHistory {
-		return m.cursor * 2 // 2 visual lines per history entry (sql + timestamp)
-	}
 	if sec != SectionTables {
 		return m.cursor // 1:1 for queries and templates
 	}
@@ -443,16 +439,14 @@ func (m Model) buildHistoryLines(maxW int) []string {
 	var lines []string
 	for i, h := range m.history {
 		sql := strings.ReplaceAll(h.SQL, "\n", " ")
+		sql = strings.ReplaceAll(sql, "\r", "")
 		sql = strings.ReplaceAll(sql, "\t", " ")
-		ts := h.Timestamp.Local().Format(time.DateTime)
-		label := trunc(sql, maxW-3)
-		detail := "\x1b[2m" + ts + "\x1b[22m"
+		ts := h.Timestamp.Local().Format("15:04")
+		name := trunc(sql+" "+ts, maxW-3)
 		if m.focused && m.activeSection == SectionHistory && i == m.cursor {
-			lines = append(lines, style.ListSelected.Render("▸ "+label))
-			lines = append(lines, "    "+detail)
+			lines = append(lines, style.ListSelected.Render("▸ "+name))
 		} else {
-			lines = append(lines, style.ListItem.Render(label))
-			lines = append(lines, "    "+detail)
+			lines = append(lines, style.ListItem.Render(name))
 		}
 	}
 	return lines
