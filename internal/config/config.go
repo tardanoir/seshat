@@ -26,6 +26,7 @@ type Keybindings struct {
 type Config struct {
 	DefaultConnection string                `toml:"default_connection"`
 	Editor            string                `toml:"editor"`
+	VimMode           bool                  `toml:"vim_mode"`
 	Connections       map[string]Connection `toml:"connections"`
 	Keys              Keybindings           `toml:"keybindings"`
 }
@@ -95,6 +96,7 @@ func Load() (*Config, error) {
 
 const defaultConfig = `default_connection = "local"
 editor = "nvim"
+vim_mode = false
 
 [connections.local]
 host = "localhost"

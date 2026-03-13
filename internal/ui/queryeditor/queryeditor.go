@@ -7,10 +7,13 @@ import (
 
 	"github.com/tardanoir/seshat/internal/ui/style"
 
+	"charm.land/bubbles/v2/key"
+	"charm.land/bubbles/v2/textarea"
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 )
 
-// SQL keyword highlighting
+// SQL keyword highlighting (vim mode only)
 var sqlKeywordRe = regexp.MustCompile(
 	`(?i)\b(SELECT|FROM|WHERE|INSERT|INTO|UPDATE|DELETE|CREATE|DROP|ALTER|` +
 		`TABLE|INDEX|VIEW|JOIN|LEFT|RIGHT|INNER|OUTER|FULL|CROSS|ON|AND|OR|` +
@@ -23,13 +26,13 @@ var sqlKeywordRe = regexp.MustCompile(
 		`FLOAT|NUMERIC|TIMESTAMP|DATE|TIME|INTERVAL)\b`)
 
 const (
-	ansiKeyword  = "\x1b[1;34m"  // bold blue
-	ansiReset    = "\x1b[22;39m" // reset bold+fg
-	ansiDim      = "\x1b[2m"
-	ansiDimEnd   = "\x1b[22m"
-	ansiMagenta  = "\x1b[35m"    // magenta for selection marker
-	ansiCyan     = "\x1b[1;36m"
-	ansiFull     = "\x1b[0m"
+	ansiKeyword = "\x1b[1;34m"  // bold blue
+	ansiReset   = "\x1b[22;39m" // reset bold+fg
+	ansiDim     = "\x1b[2m"
+	ansiDimEnd  = "\x1b[22m"
+	ansiMagenta = "\x1b[35m"
+	ansiCyan    = "\x1b[1;36m"
+	ansiFull    = "\x1b[0m"
 )
 
 func highlightSQL(s string) string {
@@ -38,12 +41,21 @@ func highlightSQL(s string) string {
 	})
 }
 
-// Model is a read-only SQL preview pane with statement selection.
+// Model is the query editor, supporting both vim (read-only) and insert (textarea) modes.
 type Model struct {
+	vimMode bool
+
+	// textarea mode
+	ta       textarea.Model
+	selRange *[2]int
+
+	// vim mode
 	sql     string
-	stmts   []statement
 	cursor  int
 	scrollY int
+
+	// shared
+	stmts   []statement
 	width   int
 	height  int
 	focused bool
@@ -55,38 +67,180 @@ type statement struct {
 	endLine   int
 }
 
-func New() Model {
-	m := Model{focused: true}
-	m.SetValue("-- Press Ctrl+E to open editor")
+func New(vimMode bool) Model {
+	m := Model{vimMode: vimMode, focused: true}
+
+	if vimMode {
+	} else {
+		ta := textarea.New()
+		ta.Placeholder = "Write a query or press Ctrl+E to open your editor"
+		ta.ShowLineNumbers = true
+		ta.EndOfBufferCharacter = ' '
+		ta.SetHeight(4)
+		ta.CharLimit = 0
+
+		// Unbind keys that conflict with app-level keybindings.
+		ta.KeyMap.LineEnd = key.NewBinding(key.WithKeys("end"))
+		ta.KeyMap.DeleteWordBackward = key.NewBinding(key.WithKeys("alt+backspace"))
+		ta.KeyMap.DeleteCharacterForward = key.NewBinding(key.WithKeys("delete"))
+		ta.KeyMap.TransposeCharacterBackward = key.NewBinding(key.WithDisabled())
+		ta.KeyMap.LineNext = key.NewBinding(key.WithKeys("down"))
+		ta.KeyMap.LinePrevious = key.NewBinding(key.WithKeys("up"))
+		ta.KeyMap.InsertNewline = key.NewBinding(key.WithKeys("enter"))
+		ta.KeyMap.DeleteCharacterBackward = key.NewBinding(key.WithKeys("backspace"))
+		ta.KeyMap.LineStart = key.NewBinding(key.WithKeys("home"))
+		ta.KeyMap.DeleteBeforeCursor = key.NewBinding(key.WithKeys("alt+backspace"))
+		ta.KeyMap.DeleteAfterCursor = key.NewBinding(key.WithDisabled())
+
+		// Statement selection marker via prompt func.
+		sel := &[2]int{-1, -1}
+		ta.SetPromptFunc(2, func(info textarea.PromptInfo) string {
+			if info.LineNumber >= sel[0] && info.LineNumber <= sel[1] {
+				return lipgloss.NewStyle().Foreground(style.ColorPrimary).Render("▎") + " "
+			}
+			return "  "
+		})
+
+		// Style: no border on the textarea itself — View() wraps it in a border.
+		s := ta.Styles()
+		s.Focused.Base = lipgloss.NewStyle()
+		s.Blurred.Base = lipgloss.NewStyle()
+		s.Focused.EndOfBuffer = lipgloss.NewStyle().Foreground(style.ColorBorder)
+		s.Blurred.EndOfBuffer = lipgloss.NewStyle().Foreground(style.ColorBorder)
+		s.Focused.LineNumber = lipgloss.NewStyle().Foreground(style.ColorBorder)
+		s.Blurred.LineNumber = lipgloss.NewStyle().Foreground(style.ColorBorder)
+		s.Focused.CursorLineNumber = lipgloss.NewStyle().Foreground(style.ColorText)
+		s.Blurred.CursorLineNumber = lipgloss.NewStyle().Foreground(style.ColorBorder)
+		s.Focused.CursorLine = lipgloss.NewStyle()
+		s.Blurred.CursorLine = lipgloss.NewStyle()
+		ta.SetStyles(s)
+
+		ta.Focus()
+		m.ta = ta
+		m.selRange = sel
+	}
+
 	return m
 }
 
-func (m Model) Value() string            { return m.sql }
-func (m Model) StmtCount() int           { return len(m.stmts) }
-func (m Model) StmtIndex() int           { return m.cursor }
-func (m *Model) SetFocused(f bool)       { m.focused = f }
-func (m Model) Focused() bool            { return m.focused }
+func (m Model) Value() string {
+	if m.vimMode {
+		return m.sql
+	}
+	return m.ta.Value()
+}
+
+func (m Model) StmtCount() int { return len(m.stmts) }
+
+func (m Model) StmtIndex() int {
+	if len(m.stmts) == 0 {
+		return 0
+	}
+	if m.vimMode {
+		return m.cursor
+	}
+	row := m.ta.Line()
+	for i, s := range m.stmts {
+		if row >= s.startLine && row <= s.endLine {
+			return i
+		}
+	}
+	return len(m.stmts) - 1
+}
+
+func (m *Model) SetFocused(f bool) {
+	m.focused = f
+	if !m.vimMode {
+		if f {
+			m.ta.Focus()
+		} else {
+			m.ta.Blur()
+		}
+	}
+}
+
+func (m Model) Focused() bool {
+	if m.vimMode {
+		return m.focused
+	}
+	return m.ta.Focused()
+}
 
 func (m Model) SelectedStatement() string {
 	if len(m.stmts) == 0 {
-		return m.sql
+		return m.Value()
 	}
-	return m.stmts[m.cursor].sql
+	return m.stmts[m.StmtIndex()].sql
 }
 
 func (m *Model) SetValue(s string) {
-	m.sql = s
+	if m.vimMode {
+		m.sql = s
+		m.cursor = 0
+		m.scrollY = 0
+	} else {
+		m.ta.SetValue(s)
+	}
 	m.stmts = parseStatements(s)
-	m.cursor = 0
-	m.scrollY = 0
+	if !m.vimMode {
+		m.updateSelRange()
+	}
+}
+
+func (m *Model) updateSelRange() {
+	if m.selRange == nil {
+		return
+	}
+	idx := m.StmtIndex()
+	if idx < len(m.stmts) {
+		m.selRange[0] = m.stmts[idx].startLine
+		m.selRange[1] = m.stmts[idx].endLine
+	} else {
+		m.selRange[0] = -1
+		m.selRange[1] = -1
+	}
 }
 
 func (m *Model) SetSize(w, h int) {
 	m.width = w
 	m.height = h
+	if !m.vimMode {
+		m.ta.SetWidth(w - 2)
+		m.ta.SetHeight(h - 2)
+	}
 }
 
 func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
+	if m.vimMode {
+		return m.updateVim(msg)
+	}
+	return m.updateTextarea(msg)
+}
+
+// ── Textarea mode ──────────────────────────────────────────
+
+func (m Model) updateTextarea(msg tea.Msg) (Model, tea.Cmd) {
+	if !m.ta.Focused() {
+		return m, nil
+	}
+	var cmd tea.Cmd
+	m.ta, cmd = m.ta.Update(msg)
+	m.stmts = parseStatements(m.ta.Value())
+	m.updateSelRange()
+	return m, cmd
+}
+
+func (m Model) viewTextarea() string {
+	s := style.Editor
+	if m.ta.Focused() {
+		s = style.Focused
+	}
+	return s.Width(m.width - 2).Render(m.ta.View())
+}
+
+// ── Vim mode ───────────────────────────────────────────────
+
+func (m Model) updateVim(msg tea.Msg) (Model, tea.Cmd) {
 	if !m.focused {
 		return m, nil
 	}
@@ -126,35 +280,33 @@ func (m *Model) ensureVisible() {
 }
 
 func (m Model) viewHeight() int {
-	h := m.height - 2 // border
+	h := m.height - 2
 	if h < 1 {
 		h = 1
 	}
 	return h
 }
 
-func (m Model) View() string {
+func (m Model) viewVim() string {
 	s := style.Editor
 	if m.focused {
 		s = style.Focused
 	}
 
 	innerH := m.viewHeight()
-	innerW := m.width - 4 // border(2) + padding(2)
+	innerW := m.width - 4
 	if innerW < 10 {
 		innerW = 10
 	}
 
 	allLines := strings.Split(m.sql, "\n")
 
-	// Selection range
 	selStart, selEnd := -1, -1
 	if len(m.stmts) > 0 && m.cursor < len(m.stmts) {
 		selStart = m.stmts[m.cursor].startLine
 		selEnd = m.stmts[m.cursor].endLine
 	}
 
-	// Render visible lines
 	endLine := m.scrollY + innerH
 	if endLine > len(allLines) {
 		endLine = len(allLines)
@@ -165,7 +317,6 @@ func (m Model) View() string {
 		line := allLines[i]
 		lineNum := ansiDim + padRight(fmt.Sprintf("%d", i+1), 3) + ansiDimEnd
 
-		// Selection: colored gutter marker (▎) on the left
 		selected := i >= selStart && i <= selEnd
 		if selected {
 			lineNum = ansiMagenta + "▎" + ansiFull + lineNum
@@ -177,26 +328,23 @@ func (m Model) View() string {
 		rendered = append(rendered, lineNum+" "+hl)
 	}
 
-	// Pad to exact inner height
 	for len(rendered) < innerH {
 		rendered = append(rendered, " "+ansiDim+"~"+ansiDimEnd)
 	}
 	rendered = rendered[:innerH]
 
-	// Footer: statement indicator (replaces last line)
-	if len(m.stmts) > 1 {
-		indicator := fmt.Sprintf(" %d/%d", m.cursor+1, len(m.stmts))
-		hint := ""
-		if m.focused {
-			hint = "  j/k"
-		}
-		footer := " " + ansiCyan + "stmt" + ansiFull + ansiDim + indicator + hint + ansiDimEnd
-		rendered[len(rendered)-1] = footer
-	}
-
 	content := strings.Join(rendered, "\n")
 	return s.Width(m.width - 2).Render(content)
 }
+
+func (m Model) View() string {
+	if m.vimMode {
+		return m.viewVim()
+	}
+	return m.viewTextarea()
+}
+
+// ── Shared ─────────────────────────────────────────────────
 
 func parseStatements(sql string) []statement {
 	allLines := strings.Split(sql, "\n")

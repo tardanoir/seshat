@@ -86,7 +86,7 @@ type App struct {
 
 func NewApp(cfg *config.Config) App {
 	s := sidebar.New()
-	p := queryeditor.New()
+	p := queryeditor.New(cfg.VimMode)
 	r := resultstable.New()
 	st := statusbar.New()
 
