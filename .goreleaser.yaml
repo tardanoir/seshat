@@ -36,3 +36,32 @@ release:
   github:
     owner: tardanoir
     name: seshat
+
+homebrew_casks:
+  - repository:
+      owner: tardanoir
+      name: homebrew-tap
+    homepage: "https://github.com/tardanoir/seshat"
+    description: "A lightweight TUI SQL client for PostgreSQL"
+    license: "MIT"
+
+nfpms:
+  - package_name: seshat
+    homepage: "https://github.com/tardanoir/seshat"
+    maintainer: "tardanoir"
+    description: "A lightweight TUI SQL client for PostgreSQL"
+    license: "MIT"
+    formats:
+      - deb
+      - rpm
+
+# TODO: setup the aur for yay install
+# aurs:
+#   - name: seshat-bin
+#     homepage: "https://github.com/tardanoir/seshat"
+#     description: "A lightweight TUI SQL client for PostgreSQL"
+#     maintainers:
+#       - "tardanoir"
+#     license: "MIT"
+#     private_key: "{{ .Env.AUR_KEY }}"
+#     git_url: "ssh://aur@aur.archlinux.org/seshat-bin.git"

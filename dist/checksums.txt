@@ -1,0 +1,4 @@
+1b57acf8f5bcb45f92c285d056d100329aa1a29bdd8f4e86dcb6263e03f33fa2  seshat_0.2.0_darwin_amd64.tar.gz
+e17ff8e5ab607d5fd316f019567c126a14ef405caf8ed2a395fe5d64a24b7acf  seshat_0.2.0_darwin_arm64.tar.gz
+ce14de76b0d5a44002f1afef11165394a6053c23df816b8a7e7d6e77d103e18a  seshat_0.2.0_linux_amd64.tar.gz
+dc4fa6f7c5efce041f13c45f1f44642972e248b67b9dbb193f0e8a93c85f57a7  seshat_0.2.0_linux_arm64.tar.gz
