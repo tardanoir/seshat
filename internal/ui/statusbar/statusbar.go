@@ -83,13 +83,24 @@ func (m Model) View() string {
 		right = append(right, style.StatusFocus.Render(m.focus))
 	}
 
-	hints := []string{
-		hint("^e", "edit"),
-		hint("^r", "run"),
-		hint("^w", "save"),
-		hint("^n", "conn"),
-		hint("^\\", "side"),
-		hint("tab", "focus"),
+	var hints []string
+	switch m.focus {
+	case "results":
+		hints = []string{
+			hint("y", "cell"),
+			hint("Y", "row"),
+			hint("^x", "export"),
+			hint("^r", "run"),
+			hint("?", "help"),
+		}
+	default:
+		hints = []string{
+			hint("^e", "edit"),
+			hint("^r", "run"),
+			hint("^w", "save"),
+			hint("^x", "export"),
+			hint("?", "help"),
+		}
 	}
 	right = append(right, strings.Join(hints, dim(" ")))
 
@@ -97,7 +108,7 @@ func (m Model) View() string {
 
 	leftW := lipgloss.Width(left)
 	rightW := lipgloss.Width(rightStr)
-	gap := m.width - leftW - rightW - 2 // 1 char padding each side
+	gap := m.width - leftW - rightW - 2
 	if gap < 1 {
 		gap = 1
 	}

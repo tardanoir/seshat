@@ -11,6 +11,7 @@ type KeyMap struct {
 	Template      key.Binding
 	ConnPick      key.Binding
 	ToggleSidebar key.Binding
+	Export        key.Binding
 	Tab           key.Binding
 	ShiftTab      key.Binding
 	Escape        key.Binding
@@ -46,6 +47,10 @@ var Keys = KeyMap{
 	ToggleSidebar: key.NewBinding(
 		key.WithKeys("ctrl+\\"),
 		key.WithHelp("C-\\", "sidebar"),
+	),
+	Export: key.NewBinding(
+		key.WithKeys("ctrl+x"),
+		key.WithHelp("C-x", "export"),
 	),
 	Tab: key.NewBinding(
 		key.WithKeys("tab"),
@@ -93,6 +98,7 @@ type Keybindings struct {
 	Template      string
 	ConnPick      string
 	ToggleSidebar string
+	Export        string
 	Tab           string
 	ShiftTab      string
 	Quit          string
@@ -112,6 +118,7 @@ func ApplyKeybindings(kb Keybindings) {
 	apply(&Keys.Template, kb.Template)
 	apply(&Keys.ConnPick, kb.ConnPick)
 	apply(&Keys.ToggleSidebar, kb.ToggleSidebar)
+	apply(&Keys.Export, kb.Export)
 	apply(&Keys.Tab, kb.Tab)
 	apply(&Keys.ShiftTab, kb.ShiftTab)
 	apply(&Keys.Quit, kb.Quit)

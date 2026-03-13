@@ -4,11 +4,17 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/atotto/clipboard"
 	"github.com/tardanoir/seshat/internal/db"
 	"github.com/tardanoir/seshat/internal/ui/style"
 
 	tea "charm.land/bubbletea/v2"
 )
+
+type CopiedToClipboardMsg struct {
+	Label string
+	Err   error
+}
 
 type Model struct {
 	width   int
@@ -18,28 +24,26 @@ type Model struct {
 	err     string
 	result  *db.QueryResult
 
-	scrollX int // horizontal character offset
-	scrollY int // first visible row index
-	cursorY int // selected row (absolute index)
+	scrollX int
+	scrollY int
+	cursorX int
+	cursorY int
 
 	colWidths []int
 	cells     [][]string
-	totalW    int // total width of all columns + separators
+	totalW    int
 }
 
 func New() Model {
 	return Model{empty: true}
 }
 
-func (m Model) Focused() bool { return m.focused }
+func (m Model) Focused() bool      { return m.focused }
+func (m *Model) SetFocused(f bool) { m.focused = f }
+func (m *Model) SetSize(w, h int)  { m.width = w; m.height = h }
 
-func (m *Model) SetFocused(f bool) {
-	m.focused = f
-}
-
-func (m *Model) SetSize(w, h int) {
-	m.width = w
-	m.height = h
+func (m *Model) CurrentResult() *db.QueryResult {
+	return m.result
 }
 
 func (m *Model) SetError(err string) {
@@ -60,6 +64,7 @@ func (m *Model) SetResult(result *db.QueryResult) {
 	m.empty = false
 	m.scrollX = 0
 	m.scrollY = 0
+	m.cursorX = 0
 	m.cursorY = 0
 
 	m.cells = make([][]string, len(result.Rows))
@@ -110,7 +115,7 @@ func (m *Model) computeColumnWidths() {
 		m.totalW += w
 	}
 	if n > 1 {
-		m.totalW += (n - 1) * 3 // " | " separators
+		m.totalW += (n - 1) * 3
 	}
 }
 
@@ -129,7 +134,6 @@ func formatCell(v string) string {
 }
 
 func (m Model) viewportHeight() int {
-	// height - border(2) - header(1) - separator(1) - footer(1) - extra(1)
 	h := m.height - 6
 	if h < 1 {
 		h = 1
@@ -138,7 +142,6 @@ func (m Model) viewportHeight() int {
 }
 
 func (m Model) viewportWidth() int {
-	// width - border(2) - padding(2) - safety margin(2)
 	w := m.width - 6
 	if w < 10 {
 		w = 10
@@ -154,6 +157,29 @@ func (m *Model) ensureCursorVisible() {
 	if m.cursorY >= m.scrollY+vh {
 		m.scrollY = m.cursorY - vh + 1
 	}
+}
+
+func (m *Model) ensureColumnVisible() {
+	if len(m.colWidths) == 0 {
+		return
+	}
+	vw := m.viewportWidth()
+	colStart := m.columnStart(m.cursorX)
+	colEnd := colStart + m.colWidths[m.cursorX]
+	if colStart < m.scrollX {
+		m.scrollX = colStart
+	}
+	if colEnd > m.scrollX+vw {
+		m.scrollX = colEnd - vw
+	}
+}
+
+func (m *Model) columnStart(col int) int {
+	pos := 0
+	for i := 0; i < col && i < len(m.colWidths); i++ {
+		pos += m.colWidths[i] + 3
+	}
+	return pos
 }
 
 func (m *Model) clampScroll() {
@@ -202,9 +228,15 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 				m.ensureCursorVisible()
 			}
 		case "left", "h":
-			m.scrollX -= 8
+			if m.cursorX > 0 {
+				m.cursorX--
+				m.ensureColumnVisible()
+			}
 		case "right", "l":
-			m.scrollX += 8
+			if m.cursorX < len(m.colWidths)-1 {
+				m.cursorX++
+				m.ensureColumnVisible()
+			}
 		case "pgup":
 			m.cursorY -= vh
 			if m.cursorY < 0 {
@@ -218,15 +250,35 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			}
 			m.ensureCursorVisible()
 		case "home":
-			m.scrollX = 0
+			m.cursorX = 0
+			m.ensureColumnVisible()
 		case "end":
-			m.scrollX = m.totalW
+			if len(m.colWidths) > 0 {
+				m.cursorX = len(m.colWidths) - 1
+				m.ensureColumnVisible()
+			}
 		case "g":
 			m.cursorY = 0
 			m.ensureCursorVisible()
 		case "G":
 			m.cursorY = len(m.cells) - 1
 			m.ensureCursorVisible()
+		case "y":
+			if m.cursorY < len(m.result.Rows) && m.cursorX < len(m.result.Rows[m.cursorY]) {
+				val := m.result.Rows[m.cursorY][m.cursorX]
+				return m, func() tea.Msg {
+					err := clipboard.WriteAll(val)
+					return CopiedToClipboardMsg{Label: "cell", Err: err}
+				}
+			}
+		case "Y":
+			if m.cursorY < len(m.result.Rows) {
+				row := strings.Join(m.result.Rows[m.cursorY], "\t")
+				return m, func() tea.Msg {
+					err := clipboard.WriteAll(row)
+					return CopiedToClipboardMsg{Label: "row", Err: err}
+				}
+			}
 		}
 		m.clampScroll()
 	}
@@ -246,13 +298,14 @@ func (m Model) buildRow(cells []string) string {
 	return strings.Join(parts, " | ")
 }
 
-// ANSI escape helpers — using raw codes avoids lipgloss double-wrapping issues
+// ANSI escape helpers
 const (
 	ansiBoldCyan     = "\x1b[1;36m"
 	ansiDim          = "\x1b[2m"
-	ansiBoldMagBg    = "\x1b[1;35;100m" // bold magenta fg, bright-black bg
+	ansiBoldMagBg    = "\x1b[1;35;100m"
+	ansiSelectedCell = "\x1b[1;36;100m"
 	ansiReset        = "\x1b[0m"
-	ansiSubtext      = "\x1b[97m" // bright white
+	ansiSubtext      = "\x1b[97m"
 )
 
 func (m Model) View() string {
@@ -275,9 +328,15 @@ func (m Model) View() string {
 		vw := m.viewportWidth()
 		vh := m.viewportHeight()
 
-		// Header — raw ANSI to avoid lipgloss width interference
+		// Header with selected column highlight
 		headerRow := m.buildRow(m.result.Columns)
 		visibleHeader := sliceVisible(headerRow, m.scrollX, vw)
+
+		if m.focused {
+			lines = append(lines, m.buildHighlightedRow(m.result.Columns, vw, ansiBoldCyan))
+		} else {
+			lines = append(lines, ansiBoldCyan+visibleHeader+ansiReset)
+		}
 
 		// Separator
 		sepParts := make([]string, len(m.colWidths))
@@ -286,8 +345,6 @@ func (m Model) View() string {
 		}
 		fullSep := strings.Join(sepParts, "-+-")
 		visibleSep := sliceVisible(fullSep, m.scrollX, vw)
-
-		lines = append(lines, ansiBoldCyan+visibleHeader+ansiReset)
 		lines = append(lines, ansiDim+visibleSep+ansiReset)
 
 		// Data rows
@@ -296,22 +353,27 @@ func (m Model) View() string {
 			endRow = len(m.cells)
 		}
 		for i := m.scrollY; i < endRow; i++ {
-			fullRow := m.buildRow(m.cells[i])
-			visibleRow := sliceVisible(fullRow, m.scrollX, vw)
-
 			if i == m.cursorY && m.focused {
-				lines = append(lines, ansiBoldMagBg+visibleRow+ansiReset)
+				lines = append(lines, m.buildCursorRow(vw))
 			} else {
+				fullRow := m.buildRow(m.cells[i])
+				visibleRow := sliceVisible(fullRow, m.scrollX, vw)
 				lines = append(lines, visibleRow)
 			}
 		}
 
 		// Footer
 		if m.result != nil {
+			colName := ""
+			if m.cursorX < len(m.result.Columns) {
+				colName = m.result.Columns[m.cursorX]
+			}
 			rowInfo := fmt.Sprintf(" %d rows", len(m.result.Rows))
 			if !m.result.IsSelect {
 				rowInfo = fmt.Sprintf(" %d rows affected", m.result.RowsAffected)
 			}
+			rowPos := fmt.Sprintf("  [%d/%d]", m.cursorY+1, len(m.cells))
+			colInfo := fmt.Sprintf("  col:%s", colName)
 			scrollHint := ""
 			if m.totalW > vw {
 				pct := 0
@@ -319,10 +381,9 @@ func (m Model) View() string {
 				if maxSX > 0 {
 					pct = m.scrollX * 100 / maxSX
 				}
-				scrollHint = fmt.Sprintf("  ←→ %d%%", pct)
+				scrollHint = fmt.Sprintf("  ←→%d%%", pct)
 			}
-			rowPos := fmt.Sprintf("  [%d/%d]", m.cursorY+1, len(m.cells))
-			lines = append(lines, ansiSubtext+rowInfo+rowPos+scrollHint+ansiReset)
+			lines = append(lines, ansiSubtext+rowInfo+rowPos+colInfo+scrollHint+ansiReset)
 		}
 	}
 
@@ -334,6 +395,66 @@ func (m Model) View() string {
 
 	content := strings.Join(lines, "\n")
 	return borderStyle.Width(m.width - 2).Render(content)
+}
+
+func (m Model) buildCursorRow(vw int) string {
+	fullRow := m.buildRow(m.cells[m.cursorY])
+	visibleRow := sliceVisible(fullRow, m.scrollX, vw)
+	runes := []rune(visibleRow)
+
+	colStart := m.columnStart(m.cursorX) - m.scrollX
+	colEnd := colStart + m.colWidths[m.cursorX]
+
+	if colStart < 0 {
+		colStart = 0
+	}
+	if colEnd > vw {
+		colEnd = vw
+	}
+	if colEnd > len(runes) {
+		colEnd = len(runes)
+	}
+
+	if colStart < colEnd && colStart < len(runes) {
+		before := string(runes[:colStart])
+		cell := string(runes[colStart:colEnd])
+		after := string(runes[colEnd:])
+		return ansiBoldMagBg + before + ansiReset +
+			ansiSelectedCell + cell + ansiReset +
+			ansiBoldMagBg + after + ansiReset
+	}
+
+	return ansiBoldMagBg + visibleRow + ansiReset
+}
+
+func (m Model) buildHighlightedRow(cells []string, vw int, baseAnsi string) string {
+	fullRow := m.buildRow(cells)
+	visibleRow := sliceVisible(fullRow, m.scrollX, vw)
+	runes := []rune(visibleRow)
+
+	colStart := m.columnStart(m.cursorX) - m.scrollX
+	colEnd := colStart + m.colWidths[m.cursorX]
+
+	if colStart < 0 {
+		colStart = 0
+	}
+	if colEnd > vw {
+		colEnd = vw
+	}
+	if colEnd > len(runes) {
+		colEnd = len(runes)
+	}
+
+	if colStart < colEnd && colStart < len(runes) {
+		before := string(runes[:colStart])
+		cell := string(runes[colStart:colEnd])
+		after := string(runes[colEnd:])
+		return baseAnsi + before + ansiReset +
+			"\x1b[1;36;4m" + cell + ansiReset +
+			baseAnsi + after + ansiReset
+	}
+
+	return baseAnsi + visibleRow + ansiReset
 }
 
 func (m Model) ResultSummary() string {

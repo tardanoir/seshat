@@ -3,6 +3,7 @@ package sidebar
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/tardanoir/seshat/internal/query"
 	"github.com/tardanoir/seshat/internal/ui/style"
@@ -12,6 +13,7 @@ import (
 
 type SelectQueryMsg struct{ Content string }
 type SelectTemplateMsg struct{ Template query.Template }
+type SelectHistoryMsg struct{ SQL string }
 type DeleteQueryMsg struct{ Name string }
 type RequestColumnsMsg struct{ Schema, TableName string }
 
@@ -41,7 +43,8 @@ const (
 	SectionQueries Section = iota
 	SectionTemplates
 	SectionTables
-	sectionCount = 3
+	SectionHistory
+	sectionCount = 4
 )
 
 type Model struct {
@@ -55,6 +58,7 @@ type Model struct {
 	queries   []query.SavedQuery
 	templates []query.Template
 	tables    []TableEntry
+	history   []query.HistoryEntry
 
 	activeSection Section // which panel is expanded
 	cursor        int     // item index within the active section
@@ -74,9 +78,10 @@ func (m *Model) SetConnection(name, db string) {
 	m.connDB = db
 }
 
-func (m *Model) SetQueries(q []query.SavedQuery)   { m.queries = q }
-func (m *Model) SetTemplates(t []query.Template)    { m.templates = t }
-func (m *Model) SetTables(tables []TableEntry)      { m.tables = tables }
+func (m *Model) SetQueries(q []query.SavedQuery)      { m.queries = q }
+func (m *Model) SetTemplates(t []query.Template)      { m.templates = t }
+func (m *Model) SetTables(tables []TableEntry)        { m.tables = tables }
+func (m *Model) SetHistory(h []query.HistoryEntry)    { m.history = h }
 
 func (m *Model) SetTableColumns(schema, tableName string, cols []ColumnDef) {
 	for i := range m.tables {
@@ -103,6 +108,8 @@ func (m Model) sectionItemCount(sec Section) int {
 			}
 		}
 		return n
+	case SectionHistory:
+		return len(m.history)
 	}
 	return 0
 }
@@ -127,6 +134,8 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			m.switchSection(SectionTemplates)
 		case "3":
 			m.switchSection(SectionTables)
+		case "4":
+			m.switchSection(SectionHistory)
 		case "up", "k":
 			if m.cursor > 0 {
 				m.cursor--
@@ -189,6 +198,11 @@ func (m Model) handleEnter() (Model, tea.Cmd) {
 					idx++
 				}
 			}
+		}
+	case SectionHistory:
+		if m.cursor < len(m.history) {
+			sql := m.history[m.cursor].SQL
+			return m, func() tea.Msg { return SelectHistoryMsg{SQL: sql} }
 		}
 	}
 	return m, nil
@@ -298,11 +312,16 @@ func (m Model) sectionTitle(sec Section) string {
 		return fmt.Sprintf("2 Templates (%d)", len(m.templates))
 	case SectionTables:
 		return fmt.Sprintf("3 Tables (%d)", len(m.tables))
+	case SectionHistory:
+		return fmt.Sprintf("4 History (%d)", len(m.history))
 	}
 	return ""
 }
 
 func (m Model) cursorToVisualLine(sec Section) int {
+	if sec == SectionHistory {
+		return m.cursor * 2 // 2 visual lines per history entry (sql + timestamp)
+	}
 	if sec != SectionTables {
 		return m.cursor // 1:1 for queries and templates
 	}
@@ -336,6 +355,8 @@ func (m Model) buildSectionLines(sec Section, maxW int) []string {
 		return m.buildTemplateLines(maxW)
 	case SectionTables:
 		return m.buildTableLines(maxW)
+	case SectionHistory:
+		return m.buildHistoryLines(maxW)
 	}
 	return nil
 }
@@ -410,6 +431,28 @@ func (m Model) buildTableLines(maxW int) []string {
 				}
 				idx++
 			}
+		}
+	}
+	return lines
+}
+
+func (m Model) buildHistoryLines(maxW int) []string {
+	if len(m.history) == 0 {
+		return []string{"\x1b[2m(none)\x1b[22m"}
+	}
+	var lines []string
+	for i, h := range m.history {
+		sql := strings.ReplaceAll(h.SQL, "\n", " ")
+		sql = strings.ReplaceAll(sql, "\t", " ")
+		ts := h.Timestamp.Local().Format(time.DateTime)
+		label := trunc(sql, maxW-3)
+		detail := "\x1b[2m" + ts + "\x1b[22m"
+		if m.focused && m.activeSection == SectionHistory && i == m.cursor {
+			lines = append(lines, style.ListSelected.Render("▸ "+label))
+			lines = append(lines, "    "+detail)
+		} else {
+			lines = append(lines, style.ListItem.Render(label))
+			lines = append(lines, "    "+detail)
 		}
 	}
 	return lines

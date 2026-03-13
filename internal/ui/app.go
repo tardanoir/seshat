@@ -3,6 +3,8 @@ package ui
 import (
 	"context"
 	"fmt"
+	"path/filepath"
+	"time"
 
 	"github.com/tardanoir/seshat/internal/config"
 	"github.com/tardanoir/seshat/internal/db"
@@ -37,13 +39,19 @@ const (
 	ModalTemplatePicker
 	ModalTemplateVars
 	ModalConfirm
+	ModalExport
+	ModalHelp
 )
 
 // Messages
-type QueryResultMsg struct{ Result *db.QueryResult }
+type QueryResultMsg struct {
+	Result *db.QueryResult
+	SQL    string
+}
 type QueryErrorMsg struct{ Err error }
 type QueriesLoadedMsg struct{ Queries []query.SavedQuery }
 type TemplatesLoadedMsg struct{ Templates []query.Template }
+type HistoryLoadedMsg struct{ History []query.HistoryEntry }
 type ConnectedMsg struct {
 	DB   *db.DB
 	Name string
@@ -75,7 +83,10 @@ type App struct {
 	templatePicker modal.TemplatePickerModel
 	templateVars   modal.TemplateVarsModel
 	confirmModal   modal.ConfirmModel
+	exportModal    modal.ExportModel
+	helpModal      modal.HelpModel
 	deleteTarget   string
+	lastSQL        string
 
 	focus          Focus
 	sidebarVisible bool
@@ -107,6 +118,7 @@ func (a App) Init() tea.Cmd {
 		a.connectCmd(a.cfg.DefaultConnection),
 		a.loadQueriesCmd(),
 		a.loadTemplatesCmd(),
+		a.loadHistoryCmd(),
 	)
 }
 
@@ -139,6 +151,13 @@ func (a *App) loadTemplatesCmd() tea.Cmd {
 	return func() tea.Msg {
 		t, _ := query.ListTemplates()
 		return TemplatesLoadedMsg{Templates: t}
+	}
+}
+
+func (a *App) loadHistoryCmd() tea.Cmd {
+	return func() tea.Msg {
+		h, _ := query.LoadHistory()
+		return HistoryLoadedMsg{History: h}
 	}
 }
 
@@ -191,6 +210,7 @@ func (a *App) executeSelectedCmd() tea.Cmd {
 	if sql == "" {
 		return func() tea.Msg { return QueryErrorMsg{Err: fmt.Errorf("no statement selected")} }
 	}
+	a.lastSQL = sql
 	ctx, cancel := context.WithCancel(context.Background())
 	a.cancel = cancel
 	return func() tea.Msg {
@@ -198,7 +218,7 @@ func (a *App) executeSelectedCmd() tea.Cmd {
 		if err != nil {
 			return QueryErrorMsg{Err: err}
 		}
-		return QueryResultMsg{Result: result}
+		return QueryResultMsg{Result: result, SQL: sql}
 	}
 }
 
@@ -247,6 +267,8 @@ func (a *App) layout() {
 	a.templatePicker.SetSize(a.width, a.height)
 	a.templateVars.SetSize(a.width, a.height)
 	a.confirmModal.SetSize(a.width, a.height)
+	a.exportModal.SetSize(a.width, a.height)
+	a.helpModal.SetSize(a.width, a.height)
 }
 
 func (a *App) toggleMainFocus() {
@@ -336,8 +358,25 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			a.connModal = modal.NewConnection(a.cfg.Connections, a.connName)
 			a.connModal.SetSize(a.width, a.height)
 			return a, nil
+		case key.Matches(msg, style.Keys.Export):
+			if a.results.CurrentResult() == nil {
+				a.status.SetError("No results to export")
+				return a, nil
+			}
+			a.modalState = ModalExport
+			a.exportModal = modal.NewExport()
+			a.exportModal.SetSize(a.width, a.height)
+			return a, nil
 		case key.Matches(msg, style.Keys.ToggleSidebar):
 			a.toggleSidebarFocus()
+			return a, nil
+		}
+
+		// ? help — only when not typing in the query editor
+		if msg.String() == "?" && a.focus != FocusPreview {
+			a.modalState = ModalHelp
+			a.helpModal = modal.NewHelp()
+			a.helpModal.SetSize(a.width, a.height)
 			return a, nil
 		}
 
@@ -363,7 +402,15 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			msg.Result.Duration.String(),
 			fmt.Sprintf("%d", len(msg.Result.Rows)),
 		)
-		return a, nil
+		// Record in history
+		go query.AddHistory(query.HistoryEntry{
+			SQL:        msg.SQL,
+			Connection: a.connName,
+			Timestamp:  time.Now(),
+			Duration:   msg.Result.Duration.String(),
+			RowCount:   len(msg.Result.Rows),
+		})
+		return a, a.loadHistoryCmd()
 
 	case QueryErrorMsg:
 		a.cancel = nil
@@ -458,6 +505,53 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case sidebar.RequestColumnsMsg:
 		return a, a.loadColumnsCmd(msg.Schema, msg.TableName)
+
+	case HistoryLoadedMsg:
+		a.sidebar.SetHistory(msg.History)
+		return a, nil
+
+	case sidebar.SelectHistoryMsg:
+		a.preview.SetValue(msg.SQL)
+		a.setFocus(FocusPreview)
+		a.status.SetMessage("Query loaded from history")
+		return a, nil
+
+	case resultstable.CopiedToClipboardMsg:
+		if msg.Err != nil {
+			a.status.SetError("Copy failed: " + msg.Err.Error())
+		} else {
+			a.status.SetMessage("Copied " + msg.Label + " to clipboard")
+		}
+		return a, nil
+
+	case modal.CloseHelpMsg:
+		a.modalState = ModalNone
+		return a, nil
+
+	case modal.ExportFormatMsg:
+		a.modalState = ModalNone
+		result := a.results.CurrentResult()
+		if result == nil {
+			a.status.SetError("No results to export")
+			return a, nil
+		}
+		ts := time.Now().Format("20060102_150405")
+		var path string
+		var err error
+		switch msg.Format {
+		case modal.FormatCSV:
+			path = filepath.Join(".", fmt.Sprintf("seshat_export_%s.csv", ts))
+			err = query.ExportCSV(result, path)
+		case modal.FormatJSON:
+			path = filepath.Join(".", fmt.Sprintf("seshat_export_%s.json", ts))
+			err = query.ExportJSON(result, path)
+		}
+		if err != nil {
+			a.status.SetError("Export failed: " + err.Error())
+		} else {
+			a.status.SetMessage("Exported to " + path)
+		}
+		return a, nil
 	}
 
 	// Delegate to focused panel
@@ -494,6 +588,10 @@ func (a App) updateModal(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.templateVars, cmd = a.templateVars.Update(msg)
 	case ModalConfirm:
 		a.confirmModal, cmd = a.confirmModal.Update(msg)
+	case ModalExport:
+		a.exportModal, cmd = a.exportModal.Update(msg)
+	case ModalHelp:
+		a.helpModal, cmd = a.helpModal.Update(msg)
 	}
 	return a, cmd
 }
@@ -548,6 +646,10 @@ func (a App) View() tea.View {
 		return view(a.templateVars.View())
 	case ModalConfirm:
 		return view(a.confirmModal.View())
+	case ModalExport:
+		return view(a.exportModal.View())
+	case ModalHelp:
+		return view(a.helpModal.View())
 	}
 
 	return view(full)

@@ -16,6 +16,7 @@ type Keybindings struct {
 	Template      string `toml:"template"`
 	ConnPick      string `toml:"connection"`
 	ToggleSidebar string `toml:"toggle_sidebar"`
+	Export        string `toml:"export"`
 	Tab           string `toml:"tab"`
 	ShiftTab      string `toml:"shift_tab"`
 	Quit          string `toml:"quit"`
