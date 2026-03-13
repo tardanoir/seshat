@@ -11,7 +11,18 @@ import (
 	tea "charm.land/bubbletea/v2"
 )
 
+var (
+	version = "dev"
+	commit  = "none"
+	date    = "unknown"
+)
+
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "--version" {
+		fmt.Printf("seshat %s (%s) built %s\n", version, commit, date)
+		os.Exit(0)
+	}
+
 	if err := config.Bootstrap(); err != nil {
 		fmt.Fprintf(os.Stderr, "seshat: bootstrap error: %v\n", err)
 		os.Exit(1)
@@ -30,10 +41,12 @@ func main() {
 		Template:      cfg.Keys.Template,
 		ConnPick:      cfg.Keys.ConnPick,
 		ToggleSidebar: cfg.Keys.ToggleSidebar,
+		Export:        cfg.Keys.Export,
 		Tab:           cfg.Keys.Tab,
 		ShiftTab:      cfg.Keys.ShiftTab,
 		Quit:          cfg.Keys.Quit,
 		Delete:        cfg.Keys.Delete,
+		Suspend:       cfg.Keys.Suspend,
 	})
 
 	app := ui.NewApp(cfg)
