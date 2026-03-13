@@ -24,7 +24,40 @@ Seshat is the thing in between. A fast, keyboard-driven TUI that connects to you
 
 ## Install
 
+### Homebrew (macOS / Linux)
+
 ```sh
+brew tap tardanoir/tap
+brew install seshat
+```
+
+### Debian / Ubuntu (.deb)
+
+Download the `.deb` from the [latest release](https://github.com/tardanoir/seshat/releases/latest), then:
+
+```sh
+sudo dpkg -i seshat_*.deb
+```
+
+### Fedora / RHEL (.rpm)
+
+Download the `.rpm` from the [latest release](https://github.com/tardanoir/seshat/releases/latest), then:
+
+```sh
+sudo rpm -i seshat_*.rpm
+```
+
+### Go
+
+```sh
+go install github.com/tardanoir/seshat@latest
+```
+
+### From source
+
+```sh
+git clone https://github.com/tardanoir/seshat.git
+cd seshat
 go build -o seshat .
 ```
 
