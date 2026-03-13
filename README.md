@@ -75,7 +75,7 @@ port = 5432
 database = "postgres"
 user = "postgres"
 password = ""
-sslmode = "disable"
+ssl_mode = "disable"
 
 [connections.production]
 host = "prod.example.com"
@@ -83,7 +83,7 @@ port = 5432
 database = "app_db"
 user = "app_user"
 password = "$DB_PASSWORD"  # env var expansion supported
-sslmode = "require"
+ssl_mode = "require"
 ```
 
 ## Saved Queries

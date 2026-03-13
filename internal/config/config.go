@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -38,7 +39,7 @@ type Connection struct {
 	Database string `toml:"database"`
 	User     string `toml:"user"`
 	Password string `toml:"password"`
-	SSLMode  string `toml:"sslmode"`
+	SSLMode  string `toml:"ssl_mode"`
 }
 
 func (c Connection) ConnString() string {
@@ -48,7 +49,7 @@ func (c Connection) ConnString() string {
 		sslmode = "disable"
 	}
 	return fmt.Sprintf("postgres://%s:%s@%s:%d/%s?sslmode=%s",
-		c.User, password, c.Host, c.Port, c.Database, sslmode)
+		c.User, url.QueryEscape(password), c.Host, c.Port, c.Database, sslmode)
 }
 
 func expandEnv(s string) string {
