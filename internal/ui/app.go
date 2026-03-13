@@ -291,6 +291,10 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return a, tea.Quit
 		}
 
+		if key.Matches(msg, style.Keys.Suspend) {
+			return a, tea.Suspend
+		}
+
 		if key.Matches(msg, style.Keys.Escape) {
 			if a.modalState != ModalNone {
 				a.modalState = ModalNone

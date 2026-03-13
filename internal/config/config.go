@@ -20,6 +20,7 @@ type Keybindings struct {
 	ShiftTab      string `toml:"shift_tab"`
 	Quit          string `toml:"quit"`
 	Delete        string `toml:"delete"`
+	Suspend       string `toml:"suspend"`
 }
 
 type Config struct {
@@ -113,4 +114,5 @@ password = ""
 # shift_tab = "shift+tab"
 # quit = "ctrl+c"
 # delete = "ctrl+d"
+# suspend = "ctrl+z"
 `

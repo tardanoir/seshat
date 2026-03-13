@@ -16,6 +16,7 @@ type KeyMap struct {
 	Escape        key.Binding
 	Quit          key.Binding
 	Delete        key.Binding
+	Suspend       key.Binding
 	Enter         key.Binding
 	Up            key.Binding
 	Down          key.Binding
@@ -66,6 +67,10 @@ var Keys = KeyMap{
 		key.WithKeys("ctrl+d"),
 		key.WithHelp("C-d", "delete"),
 	),
+	Suspend: key.NewBinding(
+		key.WithKeys("ctrl+z"),
+		key.WithHelp("C-z", "suspend"),
+	),
 	Enter: key.NewBinding(
 		key.WithKeys("enter"),
 		key.WithHelp("Enter", "select"),
@@ -92,6 +97,7 @@ type Keybindings struct {
 	ShiftTab      string
 	Quit          string
 	Delete        string
+	Suspend       string
 }
 
 func ApplyKeybindings(kb Keybindings) {
@@ -110,4 +116,5 @@ func ApplyKeybindings(kb Keybindings) {
 	apply(&Keys.ShiftTab, kb.ShiftTab)
 	apply(&Keys.Quit, kb.Quit)
 	apply(&Keys.Delete, kb.Delete)
+	apply(&Keys.Suspend, kb.Suspend)
 }
