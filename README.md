@@ -12,6 +12,16 @@ A terminal UI SQL client for PostgreSQL, built with Go and [Bubble Tea](https://
 - **Schema browser** - collapsible sidebar with tables and columns
 - **Multiple connections** - switch between configured PostgreSQL instances
 
+## Elevator Pitch
+
+ Let's be honest: the state of SQL clients is embarrassing. On one end you've got psql, which renders your results like a ransom note the second a column is wider than 20 characters. You want to reuse a query? Hope you like scrolling through your shell history. You want to switch databases? Quit, retype the connection string from memory, fat-finger the port, try again.
+
+On the other end you've got the GUI clients. DBeaver takes longer to load than your database takes to boot. pgAdmin spins up a whole web server so you can right-click through seventeen context menus. DataGrip wants $200 a year and half your RAM just to run a SELECT statement. You wanted a SQL client, not a second operating system. Each of these tools are great at what they're trying to accomplish, but there's too much bloat.
+
+There's nothing in between. Either you suffer in a raw terminal or you surrender your entire machine to an application that treats running a query like launching the space shuttle.
+
+Seshat is the thing in between. A fast, keyboard-driven TUI that connects to your Postgres databases, runs your queries, shows you clean results, and gets out of your way. Save queries, browse your schema, switch connections — all without leaving your terminal, all without waiting for anything to load. It does what you need and nothing you don't.
+
 ## Install
 
 ```sh
