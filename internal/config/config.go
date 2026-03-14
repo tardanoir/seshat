@@ -34,15 +34,31 @@ type Config struct {
 }
 
 type Connection struct {
+	Type     string `toml:"type"`
 	Host     string `toml:"host"`
 	Port     int    `toml:"port"`
 	Database string `toml:"database"`
 	User     string `toml:"user"`
 	Password string `toml:"password"`
 	SSLMode  string `toml:"ssl_mode"`
+	Path     string `toml:"path"`
+}
+
+// Set the type variable for diff types of db's
+func (c Connection) DriverType() string {
+	if c.Type != "" {
+		return c.Type
+	}
+	if c.Path != "" {
+		return "sqlite"
+	}
+	return "postgres"
 }
 
 func (c Connection) ConnString() string {
+	if c.DriverType() == "sqlite" {
+		return expandPath(c.Path)
+	}
 	password := expandEnv(c.Password)
 	sslmode := c.SSLMode
 	if sslmode == "" {
@@ -55,6 +71,17 @@ func (c Connection) ConnString() string {
 func expandEnv(s string) string {
 	if strings.HasPrefix(s, "$") {
 		return os.Getenv(strings.TrimPrefix(s, "$"))
+	}
+	return s
+}
+
+func expandPath(s string) string {
+	s = expandEnv(s)
+	if strings.HasPrefix(s, "~/") {
+		home, err := os.UserHomeDir()
+		if err == nil {
+			s = filepath.Join(home, s[2:])
+		}
 	}
 	return s
 }
