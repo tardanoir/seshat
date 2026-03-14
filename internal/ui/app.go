@@ -130,9 +130,10 @@ func (a *App) connectCmd(name string) tea.Cmd {
 		}
 	}
 	connStr := conn.ConnString()
+	driverType := conn.DriverType()
 	return func() tea.Msg {
 		ctx := context.Background()
-		d, err := db.Connect(ctx, connStr, name)
+		d, err := db.Connect(ctx, driverType, connStr, name)
 		if err != nil {
 			return ConnectErrorMsg{Err: err}
 		}
@@ -386,9 +387,13 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		a.db = msg.DB
 		a.connName = msg.Name
-		a.sidebar.SetConnection(msg.Name, msg.Conn.Database)
+		dbLabel := msg.Conn.Database
+		if msg.Conn.DriverType() == "sqlite" {
+			dbLabel = filepath.Base(msg.Conn.Path)
+		}
+		a.sidebar.SetConnection(msg.Name, dbLabel)
 		a.status.SetMessage("Connected to " + msg.Name)
-		a.status.SetConnection(msg.Name, msg.Conn.Database)
+		a.status.SetConnection(msg.Name, dbLabel)
 		return a, a.loadTablesCmd()
 
 	case ConnectErrorMsg:

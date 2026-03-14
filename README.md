@@ -78,12 +78,17 @@ password = ""
 ssl_mode = "disable"
 
 [connections.production]
+type = "postgres"  # optional, defaults to "postgres"
 host = "prod.example.com"
 port = 5432
 database = "app_db"
 user = "app_user"
 password = "$DB_PASSWORD"  # env var expansion supported
 ssl_mode = "require"
+
+[connections.mydb]
+type = "sqlite"
+path = "/path/to/database.db"
 ```
 
 ## Saved Queries
