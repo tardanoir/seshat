@@ -48,5 +48,5 @@ func AddHistory(entry HistoryEntry) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(historyPath(), data, 0o644)
+	return os.WriteFile(historyPath(), data, 0o600)
 }

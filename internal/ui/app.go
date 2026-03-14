@@ -131,9 +131,10 @@ func (a *App) connectCmd(name string) tea.Cmd {
 	}
 	connStr := conn.ConnString()
 	driverType := conn.DriverType()
+	maxRows := a.cfg.MaxRows
 	return func() tea.Msg {
 		ctx := context.Background()
-		d, err := db.Connect(ctx, driverType, connStr, name)
+		d, err := db.Connect(ctx, driverType, connStr, name, maxRows)
 		if err != nil {
 			return ConnectErrorMsg{Err: err}
 		}
@@ -403,10 +404,11 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case QueryResultMsg:
 		a.cancel = nil
 		a.results.SetResult(msg.Result)
-		a.status.SetResult(
-			msg.Result.Duration.String(),
-			fmt.Sprintf("%d", len(msg.Result.Rows)),
-		)
+		rowLabel := fmt.Sprintf("%d", len(msg.Result.Rows))
+		if msg.Result.Truncated {
+			rowLabel = fmt.Sprintf("%d/%d (truncated)", len(msg.Result.Rows), msg.Result.TotalRows)
+		}
+		a.status.SetResult(msg.Result.Duration.String(), rowLabel)
 		// Record in history
 		go query.AddHistory(query.HistoryEntry{
 			SQL:        msg.SQL,

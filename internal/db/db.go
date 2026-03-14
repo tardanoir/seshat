@@ -6,7 +6,7 @@ import (
 	"strings"
 )
 
-func Connect(ctx context.Context, driverName, connString, name string) (*DB, error) {
+func Connect(ctx context.Context, driverName, connString, name string, maxRows int) (*DB, error) {
 	var drv Driver
 	var err error
 
@@ -21,7 +21,7 @@ func Connect(ctx context.Context, driverName, connString, name string) (*DB, err
 	if err != nil {
 		return nil, fmt.Errorf("connecting to %s: %w", name, err)
 	}
-	return &DB{Driver: drv, Name: name}, nil
+	return &DB{Driver: drv, Name: name, MaxRows: maxRows}, nil
 }
 
 func splitStatements(sql string) []string {

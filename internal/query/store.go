@@ -53,7 +53,7 @@ func List() ([]SavedQuery, error) {
 func Save(name, content string) error {
 	safe := sanitizeFilename(name)
 	path := filepath.Join(QueriesDir(), safe+".sql")
-	return os.WriteFile(path, []byte(content), 0o644)
+	return os.WriteFile(path, []byte(content), 0o600)
 }
 
 func Delete(name string) error {

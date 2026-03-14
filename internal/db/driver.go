@@ -11,6 +11,8 @@ type QueryResult struct {
 	Duration     time.Duration
 	RowsAffected int64
 	IsSelect     bool
+	Truncated    bool
+	TotalRows    int
 }
 
 type TableInfo struct {
@@ -34,12 +36,22 @@ type Driver interface {
 
 // DB wraps a Driver with a connection name.
 type DB struct {
-	Driver Driver
-	Name   string
+	Driver  Driver
+	Name    string
+	MaxRows int
 }
 
 func (d *DB) Execute(ctx context.Context, sql string) (*QueryResult, error) {
-	return d.Driver.Execute(ctx, sql)
+	result, err := d.Driver.Execute(ctx, sql)
+	if err != nil {
+		return nil, err
+	}
+	if d.MaxRows > 0 && result.IsSelect && len(result.Rows) > d.MaxRows {
+		result.TotalRows = len(result.Rows)
+		result.Rows = result.Rows[:d.MaxRows]
+		result.Truncated = true
+	}
+	return result, nil
 }
 
 func (d *DB) ListTables(ctx context.Context) ([]TableInfo, error) {

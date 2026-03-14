@@ -29,6 +29,7 @@ type Config struct {
 	DefaultConnection string                `toml:"default_connection"`
 	Editor            string                `toml:"editor"`
 	VimMode           bool                  `toml:"vim_mode"`
+	MaxRows           int                   `toml:"max_rows"`
 	Connections       map[string]Connection `toml:"connections"`
 	Keys              Keybindings           `toml:"keybindings"`
 }
@@ -120,12 +121,16 @@ func Load() (*Config, error) {
 	if cfg.Connections == nil {
 		cfg.Connections = make(map[string]Connection)
 	}
+	if cfg.MaxRows <= 0 {
+		cfg.MaxRows = 10000
+	}
 	return &cfg, nil
 }
 
 const defaultConfig = `default_connection = "local"
 editor = "nvim"
 vim_mode = false
+# max_rows = 10000
 
 [connections.local]
 host = "localhost"
