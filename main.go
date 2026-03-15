@@ -49,7 +49,7 @@ func main() {
 		Suspend:       cfg.Keys.Suspend,
 	})
 
-	app := ui.NewApp(cfg)
+	app := ui.NewApp(cfg, version)
 	p := tea.NewProgram(app)
 	if _, err := p.Run(); err != nil {
 		fmt.Fprintf(os.Stderr, "seshat: %v\n", err)

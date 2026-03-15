@@ -10,13 +10,14 @@ import (
 )
 
 type Model struct {
-	width    int
-	message  string
-	isError  bool
-	connName string
-	dbName   string
-	focus    string // "query", "results", "sidebar"
-	stmtInfo string // "2/5" etc
+	width      int
+	message    string
+	isError    bool
+	connName   string
+	dbName     string
+	focus      string // "query", "results", "sidebar"
+	stmtInfo   string // "2/5" etc
+	updateHint string // e.g. "0.3.0"
 }
 
 func New() Model {
@@ -27,7 +28,8 @@ func (m *Model) SetWidth(w int)        { m.width = w }
 func (m *Model) SetMessage(msg string) { m.message = msg; m.isError = false }
 func (m *Model) SetError(msg string)   { m.message = msg; m.isError = true }
 func (m *Model) SetFocus(f string)     { m.focus = f }
-func (m *Model) SetStmtInfo(s string)  { m.stmtInfo = s }
+func (m *Model) SetStmtInfo(s string)    { m.stmtInfo = s }
+func (m *Model) SetUpdateHint(ver string) { m.updateHint = ver }
 
 func (m *Model) SetConnection(name, dbName string) {
 	m.connName = name
@@ -81,6 +83,10 @@ func (m Model) View() string {
 
 	if m.focus != "" {
 		right = append(right, style.StatusFocus.Render(m.focus))
+	}
+
+	if m.updateHint != "" {
+		right = append(right, style.StatusUpdate.Render("v"+m.updateHint+" available"))
 	}
 
 	var hints []string

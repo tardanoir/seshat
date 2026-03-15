@@ -87,6 +87,10 @@ var (
 	StatusKeyLabel = lipgloss.NewStyle().
 				Foreground(ColorBorder)
 
+	StatusUpdate = lipgloss.NewStyle().
+			Foreground(ColorWarning).
+			Italic(true)
+
 	// Modals
 	Title = lipgloss.NewStyle().
 		Foreground(ColorPrimary).

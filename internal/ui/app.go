@@ -16,6 +16,7 @@ import (
 	"github.com/tardanoir/seshat/internal/ui/sidebar"
 	"github.com/tardanoir/seshat/internal/ui/statusbar"
 	"github.com/tardanoir/seshat/internal/ui/style"
+	"github.com/tardanoir/seshat/internal/version"
 
 	"charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
@@ -52,6 +53,7 @@ type QueryErrorMsg struct{ Err error }
 type QueriesLoadedMsg struct{ Queries []query.SavedQuery }
 type TemplatesLoadedMsg struct{ Templates []query.Template }
 type HistoryLoadedMsg struct{ History []query.HistoryEntry }
+type UpdateAvailableMsg struct{ Info version.UpdateInfo }
 type ConnectedMsg struct {
 	DB   *db.DB
 	Name string
@@ -93,9 +95,10 @@ type App struct {
 	width          int
 	height         int
 	ready          bool
+	version        string
 }
 
-func NewApp(cfg *config.Config) App {
+func NewApp(cfg *config.Config, ver string) App {
 	s := sidebar.New()
 	p := queryeditor.New(cfg.VimMode)
 	r := resultstable.New()
@@ -110,6 +113,7 @@ func NewApp(cfg *config.Config) App {
 		focus:          FocusPreview,
 		sidebarVisible: true,
 		connName:       cfg.DefaultConnection,
+		version:        ver,
 	}
 }
 
@@ -119,7 +123,16 @@ func (a App) Init() tea.Cmd {
 		a.loadQueriesCmd(),
 		a.loadTemplatesCmd(),
 		a.loadHistoryCmd(),
+		a.checkUpdateCmd(),
 	)
+}
+
+func (a *App) checkUpdateCmd() tea.Cmd {
+	ver := a.version
+	return func() tea.Msg {
+		info := version.Check(ver)
+		return UpdateAvailableMsg{Info: info}
+	}
 }
 
 func (a *App) connectCmd(name string) tea.Cmd {
@@ -515,6 +528,12 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case HistoryLoadedMsg:
 		a.sidebar.SetHistory(msg.History)
+		return a, nil
+
+	case UpdateAvailableMsg:
+		if msg.Info.Available {
+			a.status.SetUpdateHint(msg.Info.Latest)
+		}
 		return a, nil
 
 	case sidebar.SelectHistoryMsg:
