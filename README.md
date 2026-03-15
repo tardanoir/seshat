@@ -1,4 +1,4 @@
-<script type="text/javascript" src="https://cdnjs.buymeacoffee.com/1.0.0/button.prod.min.js" data-name="bmc-button" data-slug="tardanoir" data-color="#5F7FFF" data-emoji="🍕"  data-font="Inter" data-text="Buy me a pizza" data-outline-color="#000000" data-font-color="#ffffff" data-coffee-color="#FFDD00" ></script>
+[![Buy me a pizza](https://img.buymeacoffee.com/button-api/?text=Buy me a pizza&emoji=🍕&slug=tardanoir&button_colour=5F7FFF&font_colour=ffffff&font_family=Inter&outline_colour=000000&coffee_colour=FFDD00)](https://www.buymeacoffee.com/tardanoir)
 
 # Seshat
 
