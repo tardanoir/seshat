@@ -1,5 +1,3 @@
-[![Buy me a pizza](https://img.buymeacoffee.com/button-api/?text=Buy me a pizza&emoji=🍕&slug=tardanoir&button_colour=5F7FFF&font_colour=ffffff&font_family=Inter&outline_colour=000000&coffee_colour=FFDD00)](https://www.buymeacoffee.com/tardanoir)
-
 # Seshat
 
 A terminal UI SQL client for PostgreSQL, built with Go and [Bubble Tea](https://github.com/charmbracelet/bubbletea).
