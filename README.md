@@ -24,7 +24,7 @@ Seshat is the thing in between. A fast, keyboard-driven TUI that connects to you
 
 ## Support for new databases
 
-I'm currently supporting PostgreSQL and SQLite, and my plan is to keep it that way for now. I'd love the idea to have all databases supported, but the truth is that I'm currently not a user of any db's other then these two. I might add MySQL (and MariaDB for that matter), but that's not a promisse. The goal of this project is to do a tool that I really want to use, and also to learn go in the process. I'll keep doing the features that interest me.
+I'll be adding support for Mysql and Mariadb soon. Other databases will be considered based on demand.
 
 ## Install
 
