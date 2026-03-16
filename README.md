@@ -11,6 +11,7 @@ A terminal UI SQL client for PostgreSQL, built with Go and [Bubble Tea](https://
 - **Parameterized templates** - SQL files with `{{variable}}` placeholders and TOML frontmatter
 - **Schema browser** - collapsible sidebar with tables and columns
 - **Multiple connections** - switch between configured PostgreSQL instances
+- **File support** - Open your csv and json files and query them like SQL tables
 
 ## Elevator Pitch
 
@@ -21,6 +22,39 @@ On the other end you've got the GUI clients. DBeaver takes longer to load than y
 There's nothing in between. Either you suffer in a raw terminal or you surrender your entire machine to an application that treats running a query like launching the space shuttle.
 
 Seshat is the thing in between. A fast, keyboard-driven TUI that connects to your Postgres databases, runs your queries, shows you clean results, and gets out of your way. Save queries, browse your schema, switch connections — all without leaving your terminal, all without waiting for anything to load. It does what you need and nothing you don't.
+
+## Querying files
+
+  What works
+
+- All SELECT features: SELECT, WHERE, ORDER BY, GROUP BY, HAVING, LIMIT, OFFSET, DISTINCT
+- Aggregations: COUNT(), SUM(), AVG(), MIN(), MAX(), GROUP_CONCAT()
+- Joins: You won't have multiple tables in a single CSV, but you could self-join
+- Subqueries: SELECT * WHERE price > (SELECT AVG(price))
+- String functions: LIKE, GLOB, LENGTH(), UPPER(), LOWER(), SUBSTR(), REPLACE(), TRIM()
+- Math: ABS(), ROUND(), arithmetic operators
+- CASE expressions: CASE WHEN ... THEN ... END
+- CTEs: WITH cte AS (...) SELECT ...
+- Window functions: ROW_NUMBER(), RANK(), LAG(), LEAD(), etc.
+- CREATE INDEX, CREATE VIEW, INSERT, UPDATE, DELETE (all in-memory, won't modify the file)
+- Implicit FROM: SELECT * WHERE age > 30 works — the FROM clause is auto-injected since there's only one table
+
+  Limitations
+
+- All columns are TEXT — there's no type inference. So WHERE age > 30 does a string comparison, not numeric. You need to cast: WHERE CAST(age AS INTEGER) > 30. I'll be working on a improvement for this very soon.
+- In-memory only — any INSERT, UPDATE, DELETE, or schema changes are lost when you disconnect. The original file is never modified. You can write the results to a new file with `ctrl+x`
+- Single table — one CSV = one table, named after the filename (e.g., sales_data.csv → table sales_data)
+- Full file load — the entire file is read into memory on connect, so very large files (hundreds of MB+) may be slow to open or consume significant RAM
+- No PostgreSQL-specific syntax — things like ILIKE, ::int casting, array operators, or JSONB functions won't work. It's SQLite, not Postgres.
+- Flat structure only for JSON — JSON files must be an array of flat objects ([{"key": "val"}, ...]). Nested objects get stringified, not expanded into columns. Will also be working on a better solution. It's kinda hard through due to the different json structures.
+
+  The TEXT-column limitation is the biggest practical one. A common pattern would be:
+
+```sql
+SELECT name, CAST(price AS REAL) as price
+WHERE CAST(price AS REAL) > 100
+ORDER BY CAST(price AS REAL) DESC
+```
 
 ## Support for new databases
 
@@ -55,7 +89,12 @@ sudo rpm -i seshat_*.rpm
 
 ```sh
 go install github.com/tardanoir/seshat@latest
+
 ```
+
+### Arch
+
+Soon. Need to figure out how to add the project to the AUR.
 
 ### From source
 
