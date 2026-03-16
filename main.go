@@ -3,6 +3,8 @@ package main
 import (
 	"fmt"
 	"os"
+	"path/filepath"
+	"strings"
 
 	"github.com/tardanoir/seshat/internal/config"
 	"github.com/tardanoir/seshat/internal/ui"
@@ -32,6 +34,24 @@ func main() {
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "seshat: config error: %v\n", err)
 		os.Exit(1)
+	}
+
+	// seshat + filePath will open the file
+	if len(os.Args) > 1 && !strings.HasPrefix(os.Args[1], "-") {
+		filePath := os.Args[1]
+		absPath, err := filepath.Abs(filePath)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "seshat: %v\n", err)
+			os.Exit(1)
+		}
+		if _, err := os.Stat(absPath); err != nil {
+			fmt.Fprintf(os.Stderr, "seshat: %v\n", err)
+			os.Exit(1)
+		}
+		conn := config.Connection{Path: absPath}
+		name := strings.TrimSuffix(filepath.Base(absPath), filepath.Ext(absPath))
+		cfg.Connections[name] = conn
+		cfg.DefaultConnection = name
 	}
 
 	style.ApplyKeybindings(style.Keybindings{

@@ -1,7 +1,6 @@
 package modal
 
 import (
-	"fmt"
 	"sort"
 	"strings"
 
@@ -18,6 +17,12 @@ type SwitchConnectionMsg struct {
 	Connection config.Connection
 }
 
+type OpenAddConnMsg struct{}
+
+type DeleteConnectionMsg struct {
+	Name string
+}
+
 type ConnectionModel struct {
 	names   []string
 	conns   map[string]config.Connection
@@ -27,12 +32,16 @@ type ConnectionModel struct {
 	height  int
 }
 
+const newConnEntry = "+ New Connection"
+
 func NewConnection(conns map[string]config.Connection, current string) ConnectionModel {
 	names := make([]string, 0, len(conns))
 	for k := range conns {
 		names = append(names, k)
 	}
 	sort.Strings(names)
+	// append the "new connection" entry at the end.
+	names = append(names, newConnEntry)
 	cursor := 0
 	for i, n := range names {
 		if n == current {
@@ -67,37 +76,91 @@ func (m ConnectionModel) Update(msg tea.Msg) (ConnectionModel, tea.Cmd) {
 			}
 		case key.Matches(msg, style.Keys.Enter):
 			name := m.names[m.cursor]
+			if name == newConnEntry {
+				return m, func() tea.Msg { return OpenAddConnMsg{} }
+			}
 			conn := m.conns[name]
 			return m, func() tea.Msg {
 				return SwitchConnectionMsg{Name: name, Connection: conn}
+			}
+		case key.Matches(msg, style.Keys.Delete):
+			name := m.names[m.cursor]
+			if name != newConnEntry {
+				return m, func() tea.Msg { return DeleteConnectionMsg{Name: name} }
 			}
 		}
 	}
 	return m, nil
 }
 
+func connTypeBadge(driverType string) string {
+	switch driverType {
+	case "postgres", "postgresql":
+		return style.StatusConn.Render("pg")
+	case "sqlite", "sqlite3":
+		return style.StatusMsg.Render("sqlite")
+	case "csv":
+		return style.StatusMsg.Render("csv")
+	case "json":
+		return style.StatusMsg.Render("json")
+	default:
+		return style.StatusMsg.Render(driverType)
+	}
+}
+
 func (m ConnectionModel) View() string {
 	var b strings.Builder
-	b.WriteString(style.Title.Render("Switch Connection"))
+	b.WriteString(style.Title.Render("Connections"))
 	b.WriteString("\n\n")
 
 	for i, name := range m.names {
-		c := m.conns[name]
-		label := fmt.Sprintf("%s (%s:%d/%s)", name, c.Host, c.Port, c.Database)
-		if name == m.current {
-			label += " *"
+		selected := i == m.cursor
+		prefix := "  "
+		if selected {
+			prefix = style.ListSelected.Render("▸ ")
 		}
-		if i == m.cursor {
-			b.WriteString(style.ListSelected.Render("▸ " + label))
+
+		if name == newConnEntry {
+			b.WriteString(style.StatusMsg.Render("────────────────────────"))
+			b.WriteString("\n")
+			if selected {
+				b.WriteString(style.ListSelected.Render("▸ + New Connection"))
+			} else {
+				b.WriteString(style.ListItem.Render("  + New Connection"))
+			}
+			b.WriteString("\n")
+			continue
+		}
+
+		c := m.conns[name]
+		badge := connTypeBadge(c.DriverType())
+		detail := style.StatusMsg.Render(c.DisplayLabel())
+
+		connName := name
+		if name == m.current {
+			connName += style.Success.Render(" *")
+		}
+
+		if selected {
+			b.WriteString(prefix + style.ListSelected.Render(connName) + "  " + badge)
 		} else {
-			b.WriteString(style.ListItem.Render("  " + label))
+			b.WriteString(prefix + style.ListItem.Render(connName) + "  " + badge)
 		}
 		b.WriteString("\n")
+		b.WriteString("    " + detail)
+		b.WriteString("\n")
 	}
-	b.WriteString("\n")
-	b.WriteString(style.ListItem.Render("↑↓ navigate  ↵ select  Esc close"))
 
-	modalW := 50
+	b.WriteString("\n")
+	hints := []string{
+		style.StatusKey.Render("↑↓") + " " + style.StatusKeyLabel.Render("navigate"),
+		style.StatusKey.Render("↵") + " " + style.StatusKeyLabel.Render("connect"),
+		style.StatusKey.Render("C-d") + " " + style.StatusKeyLabel.Render("delete"),
+		style.StatusKey.Render("Esc") + " " + style.StatusKeyLabel.Render("close"),
+	}
+	b.WriteString("  " + strings.Join(hints, "  "))
+
+	modalW := 60
 	content := style.ModalOverlay.Width(modalW).Render(b.String())
 	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, content)
 }

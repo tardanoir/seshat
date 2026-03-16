@@ -15,6 +15,10 @@ func Connect(ctx context.Context, driverName, connString, name string, maxRows i
 		drv, err = newPostgres(ctx, connString)
 	case "sqlite", "sqlite3":
 		drv, err = newSQLite(connString)
+	case "csv":
+		drv, err = newCSV(connString)
+	case "json":
+		drv, err = newJSON(connString)
 	default:
 		return nil, fmt.Errorf("unsupported database type: %s", driverName)
 	}
