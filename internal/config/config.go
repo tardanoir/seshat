@@ -1,6 +1,7 @@
 package config
 
 import (
+	"bytes"
 	"fmt"
 	"net/url"
 	"os"
@@ -51,27 +52,53 @@ func (c Connection) DriverType() string {
 		return c.Type
 	}
 	if c.Path != "" {
-		return "sqlite"
+		ext := strings.ToLower(filepath.Ext(c.Path))
+		switch ext {
+		case ".csv":
+			return "csv"
+		case ".json":
+			return "json"
+		default:
+			return "sqlite"
+		}
 	}
 	return "postgres"
 }
 
 func (c Connection) ConnString() string {
-	if c.DriverType() == "sqlite" {
+	switch c.DriverType() {
+	case "sqlite", "csv", "json":
 		return expandPath(c.Path)
+	default:
+		password := expandEnv(c.Password)
+		sslmode := c.SSLMode
+		if sslmode == "" {
+			sslmode = "disable"
+		}
+		return fmt.Sprintf("postgres://%s:%s@%s:%d/%s?sslmode=%s",
+			c.User, url.QueryEscape(password), c.Host, c.Port, c.Database, sslmode)
 	}
-	password := expandEnv(c.Password)
-	sslmode := c.SSLMode
-	if sslmode == "" {
-		sslmode = "disable"
+}
+
+func (c Connection) IsFile() bool {
+	switch c.DriverType() {
+	case "sqlite", "csv", "json":
+		return true
 	}
-	return fmt.Sprintf("postgres://%s:%s@%s:%d/%s?sslmode=%s",
-		c.User, url.QueryEscape(password), c.Host, c.Port, c.Database, sslmode)
+	return false
+}
+
+// DisplayLabel returns a human-readable label for the connection.
+func (c Connection) DisplayLabel() string {
+	if c.IsFile() {
+		return filepath.Base(c.Path)
+	}
+	return fmt.Sprintf("%s:%d/%s", c.Host, c.Port, c.Database)
 }
 
 func expandEnv(s string) string {
-	if strings.HasPrefix(s, "$") {
-		return os.Getenv(strings.TrimPrefix(s, "$"))
+	if v, ok := strings.CutPrefix(s, "$"); ok {
+		return os.Getenv(v)
 	}
 	return s
 }
@@ -125,6 +152,35 @@ func Load() (*Config, error) {
 		cfg.MaxRows = 10000
 	}
 	return &cfg, nil
+}
+
+// save writes the config back to disk.
+func (cfg *Config) Save() error {
+	cfgPath := filepath.Join(ConfigDir(), "config.toml")
+	var buf bytes.Buffer
+	enc := toml.NewEncoder(&buf)
+	if err := enc.Encode(cfg); err != nil {
+		return fmt.Errorf("encoding config: %w", err)
+	}
+	return os.WriteFile(cfgPath, buf.Bytes(), 0o644)
+}
+
+// AddConnection adds a new conn.
+func (cfg *Config) AddConnection(name string, conn Connection) error {
+	if cfg.Connections == nil {
+		cfg.Connections = make(map[string]Connection)
+	}
+	cfg.Connections[name] = conn
+	return cfg.Save()
+}
+
+// RemoveConnection removes a conn.
+func (cfg *Config) RemoveConnection(name string) error {
+	delete(cfg.Connections, name)
+	if cfg.DefaultConnection == name {
+		cfg.DefaultConnection = ""
+	}
+	return cfg.Save()
 }
 
 const defaultConfig = `default_connection = "local"

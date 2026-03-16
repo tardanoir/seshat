@@ -36,6 +36,7 @@ type ModalState int
 const (
 	ModalNone ModalState = iota
 	ModalConnection
+	ModalAddConn
 	ModalSave
 	ModalTemplatePicker
 	ModalTemplateVars
@@ -81,6 +82,7 @@ type App struct {
 
 	modalState     ModalState
 	connModal      modal.ConnectionModel
+	addConnModal   modal.AddConnModel
 	saveModal      modal.SaveModel
 	templatePicker modal.TemplatePickerModel
 	templateVars   modal.TemplateVarsModel
@@ -278,6 +280,7 @@ func (a *App) layout() {
 	a.status.SetWidth(a.width)
 
 	a.connModal.SetSize(a.width, a.height)
+	a.addConnModal.SetSize(a.width, a.height)
 	a.saveModal.SetSize(a.width, a.height)
 	a.templatePicker.SetSize(a.width, a.height)
 	a.templateVars.SetSize(a.width, a.height)
@@ -333,6 +336,10 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		if key.Matches(msg, style.Keys.Escape) {
+			if a.modalState == ModalAddConn {
+				// Let the addconn modal handle its own Esc (step back).
+				return a.updateModal(msg)
+			}
 			if a.modalState != ModalNone {
 				a.modalState = ModalNone
 				return a, nil
@@ -401,10 +408,7 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		a.db = msg.DB
 		a.connName = msg.Name
-		dbLabel := msg.Conn.Database
-		if msg.Conn.DriverType() == "sqlite" {
-			dbLabel = filepath.Base(msg.Conn.Path)
-		}
+		dbLabel := msg.Conn.DisplayLabel()
 		a.sidebar.SetConnection(msg.Name, dbLabel)
 		a.status.SetMessage("Connected to " + msg.Name)
 		a.status.SetConnection(msg.Name, dbLabel)
@@ -491,6 +495,37 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.status.SetMessage("Connecting to " + msg.Name + "...")
 		return a, a.connectCmd(msg.Name)
 
+	case modal.OpenAddConnMsg:
+		a.modalState = ModalAddConn
+		a.addConnModal = modal.NewAddConn()
+		a.addConnModal.SetSize(a.width, a.height)
+		return a, nil
+
+	case modal.BackToConnListMsg:
+		a.modalState = ModalConnection
+		a.connModal = modal.NewConnection(a.cfg.Connections, a.connName)
+		a.connModal.SetSize(a.width, a.height)
+		return a, nil
+
+	case modal.AddConnectionMsg:
+		a.modalState = ModalNone
+		if err := a.cfg.AddConnection(msg.Name, msg.Connection); err != nil {
+			a.status.SetError("Save failed: " + err.Error())
+			return a, nil
+		}
+		a.status.SetMessage("Connection added: " + msg.Name + ". Connecting...")
+		return a, a.connectCmd(msg.Name)
+
+	case modal.DeleteConnectionMsg:
+		a.deleteTarget = msg.Name
+		a.modalState = ModalConfirm
+		a.confirmModal = modal.NewConfirm(
+			fmt.Sprintf("Delete connection %q?", msg.Name),
+			"delete-connection",
+		)
+		a.confirmModal.SetSize(a.width, a.height)
+		return a, nil
+
 	case modal.OpenTemplateVarsMsg:
 		a.modalState = ModalTemplateVars
 		a.templateVars = modal.NewTemplateVars(msg.Template)
@@ -512,6 +547,18 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				a.status.SetMessage("Deleted: " + a.deleteTarget)
 			}
 			return a, a.loadQueriesCmd()
+		}
+		if msg.Confirmed && msg.Tag == "delete-connection" {
+			if a.deleteTarget == a.connName {
+				a.status.SetError("Cannot delete the active connection")
+				return a, nil
+			}
+			if err := a.cfg.RemoveConnection(a.deleteTarget); err != nil {
+				a.status.SetError("Delete failed: " + err.Error())
+			} else {
+				a.status.SetMessage("Connection removed: " + a.deleteTarget)
+			}
+			return a, nil
 		}
 		return a, nil
 
@@ -604,6 +651,8 @@ func (a App) updateModal(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch a.modalState {
 	case ModalConnection:
 		a.connModal, cmd = a.connModal.Update(msg)
+	case ModalAddConn:
+		a.addConnModal, cmd = a.addConnModal.Update(msg)
 	case ModalSave:
 		a.saveModal, cmd = a.saveModal.Update(msg)
 	case ModalTemplatePicker:
@@ -664,6 +713,8 @@ func (a App) View() tea.View {
 	switch a.modalState {
 	case ModalConnection:
 		return view(a.connModal.View())
+	case ModalAddConn:
+		return view(a.addConnModal.View())
 	case ModalSave:
 		return view(a.saveModal.View())
 	case ModalTemplatePicker:
