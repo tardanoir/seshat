@@ -2,6 +2,14 @@
 
 A terminal UI SQL client for PostgreSQL, built with Go and [Bubble Tea](https://github.com/charmbracelet/bubbletea).
 
+## Support
+
+If you find Seshat useful, consider buying me a coffee:
+
+<a href="https://buymeacoffee.com/tardanoir">
+  <img src="assets/buymeacoffee.png" alt="Buy Me A Coffee" width="200">
+</a>
+
 ## Features
 
 - **Read-only SQL preview** with syntax highlighting and multi-statement support
@@ -207,3 +215,6 @@ Only include the keys you want to override — unset keys use the defaults above
   templates/
     get_user.sql
 ```
+
+
+
