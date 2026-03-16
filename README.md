@@ -25,21 +25,21 @@ Seshat is the thing in between. A fast, keyboard-driven TUI that connects to you
 
 ## Querying files
 
-  What works
+### What works
 
-- All SELECT features: SELECT, WHERE, ORDER BY, GROUP BY, HAVING, LIMIT, OFFSET, DISTINCT
-- Aggregations: COUNT(), SUM(), AVG(), MIN(), MAX(), GROUP_CONCAT()
+- All `SELECT` features: `SELECT`, `WHERE`, `ORDER BY`, `GROUP BY`, `HAVING`, `LIMIT`, `OFFSET`, `DISTINCT`
+- Aggregations: `COUNT()`, `SUM()`, `AVG()`, `MIN()`, `MAX()`, `GROUP_CONCAT()`
 - Joins: You won't have multiple tables in a single CSV, but you could self-join
-- Subqueries: SELECT * WHERE price > (SELECT AVG(price))
-- String functions: LIKE, GLOB, LENGTH(), UPPER(), LOWER(), SUBSTR(), REPLACE(), TRIM()
-- Math: ABS(), ROUND(), arithmetic operators
-- CASE expressions: CASE WHEN ... THEN ... END
-- CTEs: WITH cte AS (...) SELECT ...
-- Window functions: ROW_NUMBER(), RANK(), LAG(), LEAD(), etc.
-- CREATE INDEX, CREATE VIEW, INSERT, UPDATE, DELETE (all in-memory, won't modify the file)
-- Implicit FROM: SELECT * WHERE age > 30 works — the FROM clause is auto-injected since there's only one table
+- Subqueries: `SELECT * WHERE price > (SELECT AVG(price))`
+- String functions: `LIKE`, `GLOB`, `LENGTH()`, `UPPER()`, `LOWER()`, `SUBSTR()`, `REPLACE()`, `TRIM()`
+- Math: `ABS()`, `ROUND()`, arithmetic operators
+- CASE expressions: `CASE WHEN ... THEN ... END`
+- CTEs: `WITH cte AS (...) SELECT ...`
+- Window functions: `ROW_NUMBER()`, `RANK()`, `LAG()`, `LEAD()`, etc.
+- `CREATE INDEX`, `CREATE VIEW`, `INSERT`, `UPDATE`, `DELETE` (all in-memory, won't modify the file)
+- Implicit FROM: `SELECT * WHERE age > 30` works — the FROM clause is auto-injected since there's only one table
 
-  Limitations
+### Limitations
 
 - All columns are TEXT — there's no type inference. So WHERE age > 30 does a string comparison, not numeric. You need to cast: WHERE CAST(age AS INTEGER) > 30. I'll be working on a improvement for this very soon.
 - In-memory only — any INSERT, UPDATE, DELETE, or schema changes are lost when you disconnect. The original file is never modified. You can write the results to a new file with `ctrl+x`
@@ -48,7 +48,7 @@ Seshat is the thing in between. A fast, keyboard-driven TUI that connects to you
 - No PostgreSQL-specific syntax — things like ILIKE, ::int casting, array operators, or JSONB functions won't work. It's SQLite, not Postgres.
 - Flat structure only for JSON — JSON files must be an array of flat objects ([{"key": "val"}, ...]). Nested objects get stringified, not expanded into columns. Will also be working on a better solution. It's kinda hard through due to the different json structures.
 
-  The TEXT-column limitation is the biggest practical one. A common pattern would be:
+The TEXT-column limitation is the biggest practical one. A common pattern would be:
 
 ```sql
 SELECT name, CAST(price AS REAL) as price
