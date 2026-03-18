@@ -11,10 +11,11 @@ import (
 )
 
 type sqliteDriver struct {
-	db *sql.DB
+	db      *sql.DB
+	maxRows int
 }
 
-func newSQLite(path string) (*sqliteDriver, error) {
+func newSQLite(path string, maxRows int) (*sqliteDriver, error) {
 	d, err := sql.Open("sqlite", path)
 	if err != nil {
 		return nil, err
@@ -23,8 +24,10 @@ func newSQLite(path string) (*sqliteDriver, error) {
 		d.Close()
 		return nil, err
 	}
-	return &sqliteDriver{db: d}, nil
+	return &sqliteDriver{db: d, maxRows: maxRows}, nil
 }
+
+func (s *sqliteDriver) SetMaxRows(n int) { s.maxRows = n }
 
 func (s *sqliteDriver) Close(_ context.Context) error {
 	return s.db.Close()
@@ -70,17 +73,27 @@ func (s *sqliteDriver) execSingle(ctx context.Context, sqlText string) (*QueryRe
 		return nil, err
 	}
 
-	var resultRows [][]string
+	cap := s.maxRows
+	if cap <= 0 {
+		cap = 256
+	}
+	resultRows := make([][]string, 0, cap)
+	truncated := false
+	nCols := len(columns)
+	vals := make([]any, nCols)
+	ptrs := make([]any, nCols)
+	for i := range vals {
+		ptrs[i] = &vals[i]
+	}
 	for rows.Next() {
-		vals := make([]any, len(columns))
-		ptrs := make([]any, len(columns))
-		for i := range vals {
-			ptrs[i] = &vals[i]
+		if s.maxRows > 0 && len(resultRows) >= s.maxRows {
+			truncated = true
+			break
 		}
 		if err := rows.Scan(ptrs...); err != nil {
 			return nil, err
 		}
-		row := make([]string, len(vals))
+		row := make([]string, nCols)
 		for i, v := range vals {
 			if v == nil {
 				row[i] = "NULL"
@@ -95,9 +108,10 @@ func (s *sqliteDriver) execSingle(ctx context.Context, sqlText string) (*QueryRe
 	}
 
 	return &QueryResult{
-		Columns:  columns,
-		Rows:     resultRows,
-		IsSelect: len(columns) > 0,
+		Columns:   columns,
+		Rows:      resultRows,
+		IsSelect:  len(columns) > 0,
+		Truncated: truncated,
 	}, nil
 }
 

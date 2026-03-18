@@ -61,6 +61,8 @@ type ConnectedMsg struct {
 	Conn config.Connection
 }
 type ConnectErrorMsg struct{ Err error }
+type ExportDoneMsg struct{ Path string }
+type ExportErrorMsg struct{ Err error }
 type TablesLoadedMsg struct{ Tables []sidebar.TableEntry }
 type ColumnsLoadedMsg struct {
 	Schema    string
@@ -423,7 +425,11 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.results.SetResult(msg.Result)
 		rowLabel := fmt.Sprintf("%d", len(msg.Result.Rows))
 		if msg.Result.Truncated {
-			rowLabel = fmt.Sprintf("%d/%d (truncated)", len(msg.Result.Rows), msg.Result.TotalRows)
+			if msg.Result.TotalRows > 0 {
+				rowLabel = fmt.Sprintf("%d/%d (truncated)", len(msg.Result.Rows), msg.Result.TotalRows)
+			} else {
+				rowLabel = fmt.Sprintf("%d+ (truncated)", len(msg.Result.Rows))
+			}
 		}
 		a.status.SetResult(msg.Result.Duration.String(), rowLabel)
 		// Record in history
@@ -609,9 +615,37 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return a, nil
 		}
 		ts := time.Now().Format("20060102_150405")
+		format := msg.Format
+
+		// If the result is truncated, re-run the query without limits.
+		if result.Truncated && a.lastSQL != "" && a.db != nil {
+			a.status.SetMessage("Exporting full result set...")
+			d := a.db
+			sql := a.lastSQL
+			return a, func() tea.Msg {
+				full, err := d.ExecuteUnlimited(context.Background(), sql)
+				if err != nil {
+					return ExportErrorMsg{Err: err}
+				}
+				var path string
+				switch format {
+				case modal.FormatCSV:
+					path = filepath.Join(".", fmt.Sprintf("seshat_export_%s.csv", ts))
+					err = query.ExportCSV(full, path)
+				case modal.FormatJSON:
+					path = filepath.Join(".", fmt.Sprintf("seshat_export_%s.json", ts))
+					err = query.ExportJSON(full, path)
+				}
+				if err != nil {
+					return ExportErrorMsg{Err: err}
+				}
+				return ExportDoneMsg{Path: path}
+			}
+		}
+
 		var path string
 		var err error
-		switch msg.Format {
+		switch format {
 		case modal.FormatCSV:
 			path = filepath.Join(".", fmt.Sprintf("seshat_export_%s.csv", ts))
 			err = query.ExportCSV(result, path)
@@ -624,6 +658,14 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			a.status.SetMessage("Exported to " + path)
 		}
+		return a, nil
+
+	case ExportDoneMsg:
+		a.status.SetMessage("Exported to " + msg.Path)
+		return a, nil
+
+	case ExportErrorMsg:
+		a.status.SetError("Export failed: " + msg.Err.Error())
 		return a, nil
 	}
 

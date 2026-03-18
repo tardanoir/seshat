@@ -54,6 +54,19 @@ func (d *DB) Execute(ctx context.Context, sql string) (*QueryResult, error) {
 	return result, nil
 }
 
+type maxRowsSetter interface {
+	SetMaxRows(int)
+}
+
+// this is used only in the export func, so the user get's all the results
+func (d *DB) ExecuteUnlimited(ctx context.Context, sql string) (*QueryResult, error) {
+	if setter, ok := d.Driver.(maxRowsSetter); ok {
+		setter.SetMaxRows(0)
+		defer setter.SetMaxRows(d.MaxRows)
+	}
+	return d.Driver.Execute(ctx, sql)
+}
+
 func (d *DB) ListTables(ctx context.Context) ([]TableInfo, error) {
 	return d.Driver.ListTables(ctx)
 }

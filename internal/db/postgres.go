@@ -2,6 +2,7 @@ package db
 
 import (
 	"context"
+	"database/sql/driver"
 	"fmt"
 	"time"
 
@@ -9,16 +10,34 @@ import (
 )
 
 type postgresDriver struct {
-	conn *pgx.Conn
+	conn    *pgx.Conn
+	maxRows int
 }
 
-func newPostgres(ctx context.Context, connString string) (*postgresDriver, error) {
+func newPostgres(ctx context.Context, connString string, maxRows int) (*postgresDriver, error) {
 	conn, err := pgx.Connect(ctx, connString)
 	if err != nil {
 		return nil, err
 	}
-	return &postgresDriver{conn: conn}, nil
+	return &postgresDriver{conn: conn, maxRows: maxRows}, nil
 }
+
+func formatPgValue(v any) string {
+	if v == nil {
+		return "NULL"
+	}
+	if valuer, ok := v.(driver.Valuer); ok {
+		if dv, err := valuer.Value(); err == nil {
+			if dv == nil {
+				return "NULL"
+			}
+			return fmt.Sprintf("%v", dv)
+		}
+	}
+	return fmt.Sprintf("%v", v)
+}
+
+func (p *postgresDriver) SetMaxRows(n int) { p.maxRows = n }
 
 func (p *postgresDriver) Close(ctx context.Context) error {
 	if p.conn != nil {
@@ -50,19 +69,24 @@ func (p *postgresDriver) execSingle(ctx context.Context, sql string) (*QueryResu
 		columns[i] = fd.Name
 	}
 
-	var resultRows [][]string
+	cap := p.maxRows
+	if cap <= 0 {
+		cap = 256
+	}
+	resultRows := make([][]string, 0, cap)
+	truncated := false
 	for rows.Next() {
+		if p.maxRows > 0 && len(resultRows) >= p.maxRows {
+			truncated = true
+			break
+		}
 		vals, err := rows.Values()
 		if err != nil {
 			return nil, err
 		}
 		row := make([]string, len(vals))
 		for i, v := range vals {
-			if v == nil {
-				row[i] = "NULL"
-			} else {
-				row[i] = fmt.Sprintf("%v", v)
-			}
+			row[i] = formatPgValue(v)
 		}
 		resultRows = append(resultRows, row)
 	}
@@ -75,6 +99,7 @@ func (p *postgresDriver) execSingle(ctx context.Context, sql string) (*QueryResu
 		Rows:         resultRows,
 		RowsAffected: rows.CommandTag().RowsAffected(),
 		IsSelect:     len(columns) > 0,
+		Truncated:    truncated,
 	}, nil
 }
 
@@ -104,7 +129,10 @@ func (p *postgresDriver) ListTables(ctx context.Context) ([]TableInfo, error) {
 	return tables, rows.Err()
 }
 
-func (p *postgresDriver) ListColumns(ctx context.Context, schema, tableName string) ([]ColumnInfo, error) {
+func (p *postgresDriver) ListColumns(
+	ctx context.Context,
+	schema, tableName string,
+) ([]ColumnInfo, error) {
 	rows, err := p.conn.Query(ctx, `
 		SELECT column_name, data_type, is_nullable
 		FROM information_schema.columns

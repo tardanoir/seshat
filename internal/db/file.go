@@ -149,7 +149,7 @@ func loadIntoSQLite(tableName string, headers []string, rows [][]string) (*fileD
 		return nil, err
 	}
 
-	return &fileDriver{sqlite: &sqliteDriver{db: d}, tableName: tableName}, nil
+	return &fileDriver{sqlite: &sqliteDriver{db: d, maxRows: 0}, tableName: tableName}, nil
 }
 
 func (f *fileDriver) Execute(ctx context.Context, sqlText string) (*QueryResult, error) {

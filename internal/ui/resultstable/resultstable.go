@@ -4,11 +4,11 @@ import (
 	"fmt"
 	"strings"
 
+	tea "charm.land/bubbletea/v2"
 	"github.com/atotto/clipboard"
+
 	"github.com/tardanoir/seshat/internal/db"
 	"github.com/tardanoir/seshat/internal/ui/style"
-
-	tea "charm.land/bubbletea/v2"
 )
 
 type CopiedToClipboardMsg struct {
@@ -32,6 +32,7 @@ type Model struct {
 	colWidths []int
 	cells     [][]string
 	totalW    int
+	separator string
 }
 
 func New() Model {
@@ -59,6 +60,7 @@ func (m *Model) SetResult(result *db.QueryResult) {
 	if result == nil || len(result.Columns) == 0 {
 		m.empty = true
 		m.cells = nil
+		m.separator = ""
 		return
 	}
 	m.empty = false
@@ -68,14 +70,32 @@ func (m *Model) SetResult(result *db.QueryResult) {
 	m.cursorY = 0
 
 	m.cells = make([][]string, len(result.Rows))
-	for i, r := range result.Rows {
-		row := make([]string, len(r))
-		for j, v := range r {
-			row[j] = formatCell(v)
-		}
-		m.cells[i] = row
+	sampleSize := 200
+	resultsSize := len(result.Rows)
+
+	if sampleSize > resultsSize {
+		sampleSize = resultsSize
+	}
+
+	for i := 0; i < sampleSize; i++ {
+		m.cells[i] = formatRow(result.Rows[i])
 	}
 	m.computeColumnWidths()
+}
+
+func formatRow(raw []string) []string {
+	row := make([]string, len(raw))
+	for j, v := range raw {
+		row[j] = formatCell(v)
+	}
+	return row
+}
+
+func (m *Model) ensureFormatted(i int) []string {
+	if m.cells[i] == nil {
+		m.cells[i] = formatRow(m.result.Rows[i])
+	}
+	return m.cells[i]
 }
 
 func (m *Model) computeColumnWidths() {
@@ -117,6 +137,13 @@ func (m *Model) computeColumnWidths() {
 	if n > 1 {
 		m.totalW += (n - 1) * 3
 	}
+
+	// Cache the separator line.
+	sepParts := make([]string, n)
+	for i, w := range m.colWidths {
+		sepParts[i] = strings.Repeat("-", w)
+	}
+	m.separator = strings.Join(sepParts, "-+-")
 }
 
 func formatCell(v string) string {
@@ -287,15 +314,19 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 }
 
 func (m Model) buildRow(cells []string) string {
-	parts := make([]string, len(m.colWidths))
+	var sb strings.Builder
+	sb.Grow(m.totalW)
 	for i, w := range m.colWidths {
+		if i > 0 {
+			sb.WriteString(" | ")
+		}
 		cell := ""
 		if i < len(cells) {
 			cell = cells[i]
 		}
-		parts[i] = padRight(cell, w)
+		writePadded(&sb, cell, w)
 	}
-	return strings.Join(parts, " | ")
+	return sb.String()
 }
 
 // ANSI escape helpers
@@ -338,13 +369,8 @@ func (m Model) View() string {
 			lines = append(lines, ansiBoldCyan+visibleHeader+ansiReset)
 		}
 
-		// Separator
-		sepParts := make([]string, len(m.colWidths))
-		for i, w := range m.colWidths {
-			sepParts[i] = strings.Repeat("-", w)
-		}
-		fullSep := strings.Join(sepParts, "-+-")
-		visibleSep := sliceVisible(fullSep, m.scrollX, vw)
+		// Separator (cached)
+		visibleSep := sliceVisible(m.separator, m.scrollX, vw)
 		lines = append(lines, ansiDim+visibleSep+ansiReset)
 
 		// Data rows
@@ -356,7 +382,7 @@ func (m Model) View() string {
 			if i == m.cursorY && m.focused {
 				lines = append(lines, m.buildCursorRow(vw))
 			} else {
-				fullRow := m.buildRow(m.cells[i])
+				fullRow := m.buildRow(m.ensureFormatted(i))
 				visibleRow := sliceVisible(fullRow, m.scrollX, vw)
 				lines = append(lines, visibleRow)
 			}
@@ -397,8 +423,8 @@ func (m Model) View() string {
 	return borderStyle.Width(m.width - 2).Render(content)
 }
 
-func (m Model) buildCursorRow(vw int) string {
-	fullRow := m.buildRow(m.cells[m.cursorY])
+func (m *Model) buildCursorRow(vw int) string {
+	fullRow := m.buildRow(m.ensureFormatted(m.cursorY))
 	visibleRow := sliceVisible(fullRow, m.scrollX, vw)
 	runes := []rune(visibleRow)
 
@@ -467,7 +493,30 @@ func (m Model) ResultSummary() string {
 	return fmt.Sprintf("%d affected in %s", m.result.RowsAffected, m.result.Duration)
 }
 
+func isASCII(s string) bool {
+	for i := 0; i < len(s); i++ {
+		if s[i] > 127 {
+			return false
+		}
+	}
+	return true
+}
+
 func sliceVisible(s string, offset, width int) string {
+	if isASCII(s) {
+		if offset >= len(s) {
+			return strings.Repeat(" ", width)
+		}
+		end := offset + width
+		if end > len(s) {
+			end = len(s)
+		}
+		result := s[offset:end]
+		if pad := width - (end - offset); pad > 0 {
+			return result + strings.Repeat(" ", pad)
+		}
+		return result
+	}
 	runes := []rune(s)
 	if offset >= len(runes) {
 		return strings.Repeat(" ", width)
@@ -477,17 +526,31 @@ func sliceVisible(s string, offset, width int) string {
 		end = len(runes)
 	}
 	result := string(runes[offset:end])
-	runeLen := end - offset
-	if runeLen < width {
-		result += strings.Repeat(" ", width-runeLen)
+	if pad := width - (end - offset); pad > 0 {
+		result += strings.Repeat(" ", pad)
 	}
 	return result
 }
 
-func padRight(s string, width int) string {
+func writePadded(sb *strings.Builder, s string, width int) {
+	if isASCII(s) {
+		if len(s) >= width {
+			sb.WriteString(s[:width])
+		} else {
+			sb.WriteString(s)
+			for i := len(s); i < width; i++ {
+				sb.WriteByte(' ')
+			}
+		}
+		return
+	}
 	r := []rune(s)
 	if len(r) >= width {
-		return string(r[:width])
+		sb.WriteString(string(r[:width]))
+	} else {
+		sb.WriteString(s)
+		for i := len(r); i < width; i++ {
+			sb.WriteByte(' ')
+		}
 	}
-	return s + strings.Repeat(" ", width-len(r))
 }

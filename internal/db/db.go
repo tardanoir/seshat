@@ -12,9 +12,9 @@ func Connect(ctx context.Context, driverName, connString, name string, maxRows i
 
 	switch driverName {
 	case "postgres", "postgresql", "":
-		drv, err = newPostgres(ctx, connString)
+		drv, err = newPostgres(ctx, connString, maxRows)
 	case "sqlite", "sqlite3":
-		drv, err = newSQLite(connString)
+		drv, err = newSQLite(connString, maxRows)
 	case "csv":
 		drv, err = newCSV(connString)
 	case "json":
