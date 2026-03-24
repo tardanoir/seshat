@@ -47,6 +47,11 @@ const (
 	fieldPassword
 	fieldSSLMode
 	fieldPath
+	fieldSSHHost
+	fieldSSHPort
+	fieldSSHUser
+	fieldSSHKey
+	fieldSSHPassword
 )
 
 type AddConnModel struct {
@@ -78,10 +83,19 @@ func NewAddConn() AddConnModel {
 	inputs[fieldPassword] = mk("", 36)
 	inputs[fieldSSLMode] = mk("disable", 20)
 	inputs[fieldPath] = mk("/path/to/file.csv", 40)
+	inputs[fieldSSHHost] = mk("ec2-xx.compute-1.amazonaws.com", 36)
+	inputs[fieldSSHPort] = mk("22", 10)
+	inputs[fieldSSHUser] = mk("ubuntu", 36)
+	inputs[fieldSSHKey] = mk("~/.ssh/id_rsa", 36)
+	inputs[fieldSSHPassword] = mk("", 36)
 
 	pw := inputs[fieldPassword]
 	pw.EchoMode = textinput.EchoPassword
 	inputs[fieldPassword] = pw
+
+	sshPw := inputs[fieldSSHPassword]
+	sshPw.EchoMode = textinput.EchoPassword
+	inputs[fieldSSHPassword] = sshPw
 
 	return AddConnModel{
 		step:   stepPickType,
@@ -108,7 +122,8 @@ func (m *AddConnModel) formFields() []addConnField {
 	if m.isFileType() {
 		fields = append(fields, fieldPath)
 	} else {
-		fields = append(fields, fieldHost, fieldPort, fieldDatabase, fieldUser, fieldPassword, fieldSSLMode)
+		fields = append(fields, fieldHost, fieldPort, fieldDatabase, fieldUser, fieldPassword, fieldSSLMode,
+			fieldSSHHost, fieldSSHPort, fieldSSHUser, fieldSSHKey, fieldSSHPassword)
 	}
 	return fields
 }
@@ -167,6 +182,21 @@ func (m AddConnModel) buildConnection() (string, config.Connection) {
 		conn.User = strings.TrimSpace(m.inputs[fieldUser].Value())
 		conn.Password = strings.TrimSpace(m.inputs[fieldPassword].Value())
 		conn.SSLMode = strings.TrimSpace(m.inputs[fieldSSLMode].Value())
+
+		sshHost := strings.TrimSpace(m.inputs[fieldSSHHost].Value())
+		if sshHost != "" {
+			sshPort, _ := strconv.Atoi(strings.TrimSpace(m.inputs[fieldSSHPort].Value()))
+			if sshPort == 0 {
+				sshPort = 22
+			}
+			conn.SSH = &config.SSHTunnel{
+				Host:     sshHost,
+				Port:     sshPort,
+				User:     strings.TrimSpace(m.inputs[fieldSSHUser].Value()),
+				Key:      strings.TrimSpace(m.inputs[fieldSSHKey].Value()),
+				Password: strings.TrimSpace(m.inputs[fieldSSHPassword].Value()),
+			}
+		}
 	}
 	return name, conn
 }
@@ -313,6 +343,14 @@ func (m AddConnModel) viewForm() string {
 		row("User", fieldUser)
 		row("Password", fieldPassword)
 		row("SSL Mode", fieldSSLMode)
+		b.WriteString("\n")
+		b.WriteString(style.StatusMsg.Render("  SSH Tunnel (optional)"))
+		b.WriteString("\n")
+		row("SSH Host", fieldSSHHost)
+		row("SSH Port", fieldSSHPort)
+		row("SSH User", fieldSSHUser)
+		row("SSH Key", fieldSSHKey)
+		row("SSH Pass", fieldSSHPassword)
 	}
 
 	if m.err != "" {

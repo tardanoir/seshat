@@ -10,6 +10,7 @@ import (
 	"github.com/tardanoir/seshat/internal/db"
 	"github.com/tardanoir/seshat/internal/editor"
 	"github.com/tardanoir/seshat/internal/query"
+	"github.com/tardanoir/seshat/internal/ssh"
 	"github.com/tardanoir/seshat/internal/ui/modal"
 	"github.com/tardanoir/seshat/internal/ui/queryeditor"
 	"github.com/tardanoir/seshat/internal/ui/resultstable"
@@ -73,6 +74,7 @@ type ColumnsLoadedMsg struct {
 type App struct {
 	cfg    *config.Config
 	db     *db.DB
+	tunnel *ssh.Tunnel
 	cancel context.CancelFunc
 
 	connName string
@@ -121,6 +123,13 @@ func NewApp(cfg *config.Config, ver string) App {
 	}
 }
 
+func (a *App) closeTunnel() {
+	if a.tunnel != nil {
+		a.tunnel.Close()
+		a.tunnel = nil
+	}
+}
+
 func (a App) Init() tea.Cmd {
 	return tea.Batch(
 		a.connectCmd(a.cfg.DefaultConnection),
@@ -139,6 +148,12 @@ func (a *App) checkUpdateCmd() tea.Cmd {
 	}
 }
 
+type tunnelConnectedMsg struct {
+	tunnel *ssh.Tunnel
+	name   string
+	conn   config.Connection
+}
+
 func (a *App) connectCmd(name string) tea.Cmd {
 	conn, ok := a.cfg.Connections[name]
 	if !ok {
@@ -146,9 +161,39 @@ func (a *App) connectCmd(name string) tea.Cmd {
 			return ConnectErrorMsg{Err: fmt.Errorf("connection %q not found", name)}
 		}
 	}
-	connStr := conn.ConnString()
+
+	if conn.HasSSH() {
+		return func() tea.Msg {
+			ctx := context.Background()
+			sshCfg := ssh.TunnelConfig{
+				Host:       conn.SSH.Host,
+				Port:       conn.SSH.Port,
+				User:       conn.SSH.User,
+				KeyPath:    conn.SSH.Key,
+				Password:   conn.SSH.Password,
+				RemoteHost: conn.Host,
+				RemotePort: conn.Port,
+			}
+			tun, err := ssh.Open(ctx, sshCfg)
+			if err != nil {
+				return ConnectErrorMsg{Err: fmt.Errorf("ssh tunnel: %w", err)}
+			}
+			return tunnelConnectedMsg{tunnel: tun, name: name, conn: conn}
+		}
+	}
+
+	return a.dbConnectCmd(name, conn, "")
+}
+
+func (a *App) dbConnectCmd(name string, conn config.Connection, localOverride string) tea.Cmd {
 	driverType := conn.DriverType()
 	maxRows := a.cfg.MaxRows
+
+	connStr := conn.ConnString()
+	if localOverride != "" {
+		connStr = conn.ConnStringVia(localOverride)
+	}
+
 	return func() tea.Msg {
 		ctx := context.Background()
 		d, err := db.Connect(ctx, driverType, connStr, name, maxRows)
@@ -330,6 +375,7 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if a.db != nil {
 				a.db.Close(context.Background())
 			}
+			a.closeTunnel()
 			return a, tea.Quit
 		}
 
@@ -404,6 +450,12 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return a, nil
 		}
 
+	case tunnelConnectedMsg:
+		// SSH tunnel is up — now connect to the DB through it.
+		a.closeTunnel()
+		a.tunnel = msg.tunnel
+		return a, a.dbConnectCmd(msg.name, msg.conn, msg.tunnel.LocalAddr())
+
 	case ConnectedMsg:
 		if a.db != nil {
 			a.db.Close(context.Background())
@@ -417,6 +469,7 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, a.loadTablesCmd()
 
 	case ConnectErrorMsg:
+		a.closeTunnel()
 		a.status.SetError("Connection failed: " + msg.Err.Error())
 		return a, nil
 
