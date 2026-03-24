@@ -134,6 +134,9 @@ func (m ConnectionModel) View() string {
 
 		c := m.conns[name]
 		badge := connTypeBadge(c.DriverType())
+		if c.HasSSH() {
+			badge += " " + style.StatusKey.Render("ssh")
+		}
 		detail := style.StatusMsg.Render(c.DisplayLabel())
 
 		connName := name

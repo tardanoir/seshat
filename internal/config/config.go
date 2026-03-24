@@ -35,15 +35,25 @@ type Config struct {
 	Keys              Keybindings           `toml:"keybindings"`
 }
 
-type Connection struct {
-	Type     string `toml:"type"`
+// TODO: right now I have a way to test the GCP and AWS approaches, still need to test other clouds.
+type SSHTunnel struct {
 	Host     string `toml:"host"`
 	Port     int    `toml:"port"`
-	Database string `toml:"database"`
 	User     string `toml:"user"`
+	Key      string `toml:"key"`
 	Password string `toml:"password"`
-	SSLMode  string `toml:"ssl_mode"`
-	Path     string `toml:"path"`
+}
+
+type Connection struct {
+	Type     string     `toml:"type"`
+	Host     string     `toml:"host"`
+	Port     int        `toml:"port"`
+	Database string     `toml:"database"`
+	User     string     `toml:"user"`
+	Password string     `toml:"password"`
+	SSLMode  string     `toml:"ssl_mode"`
+	Path     string     `toml:"path"`
+	SSH      *SSHTunnel `toml:"ssh"`
 }
 
 // Set the type variable for diff types of db's
@@ -80,6 +90,18 @@ func (c Connection) ConnString() string {
 	}
 }
 
+// ConnStringVia returns a connection string that routes through a local tunnel
+// address (e.g. "127.0.0.1:54321") instead of the configured host:port.
+func (c Connection) ConnStringVia(localAddr string) string {
+	password := expandEnv(c.Password)
+	sslmode := c.SSLMode
+	if sslmode == "" {
+		sslmode = "disable"
+	}
+	return fmt.Sprintf("postgres://%s:%s@%s/%s?sslmode=%s",
+		c.User, url.QueryEscape(password), localAddr, c.Database, sslmode)
+}
+
 func (c Connection) IsFile() bool {
 	switch c.DriverType() {
 	case "sqlite", "csv", "json":
@@ -88,12 +110,21 @@ func (c Connection) IsFile() bool {
 	return false
 }
 
+// HasSSH returns true if the connection has SSH tunnel config.
+func (c Connection) HasSSH() bool {
+	return c.SSH != nil && c.SSH.Host != ""
+}
+
 // DisplayLabel returns a human-readable label for the connection.
 func (c Connection) DisplayLabel() string {
 	if c.IsFile() {
 		return filepath.Base(c.Path)
 	}
-	return fmt.Sprintf("%s:%d/%s", c.Host, c.Port, c.Database)
+	label := fmt.Sprintf("%s:%d/%s", c.Host, c.Port, c.Database)
+	if c.HasSSH() {
+		label += fmt.Sprintf(" via %s@%s", c.SSH.User, c.SSH.Host)
+	}
+	return label
 }
 
 func expandEnv(s string) string {
