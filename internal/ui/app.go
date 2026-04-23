@@ -682,6 +682,7 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case modal.TemplateResultMsg:
 		a.modalState = ModalNone
 		a.preview.SetValue(msg.SQL)
+		a.setFocus(FocusPreview)
 		a.status.SetMessage("Template applied")
 		return a, nil
 
