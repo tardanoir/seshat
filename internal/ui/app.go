@@ -70,6 +70,9 @@ type ColumnsLoadedMsg struct {
 	TableName string
 	Columns   []sidebar.ColumnDef
 }
+type AllColumnsLoadedMsg struct {
+	ByTable map[string][]sidebar.ColumnDef // key: schema + "." + name
+}
 
 type App struct {
 	cfg    *config.Config
@@ -256,6 +259,42 @@ func (a *App) loadTablesCmd() tea.Cmd {
 		}
 		return TablesLoadedMsg{Tables: entries}
 	}
+}
+
+// loadAllColumnsCmd serially fetches columns for every table. Postgres uses a
+// single *pgx.Conn that is not safe for concurrent use, so we can't parallelize
+// these queries; instead we run them sequentially inside one goroutine and
+// emit a single message with the full result.
+func (a *App) loadAllColumnsCmd(tables []sidebar.TableEntry) tea.Cmd {
+	d := a.db
+	if d == nil || len(tables) == 0 {
+		return nil
+	}
+	snapshot := make([]sidebar.TableEntry, len(tables))
+	copy(snapshot, tables)
+	return func() tea.Msg {
+		ctx := context.Background()
+		out := make(map[string][]sidebar.ColumnDef, len(snapshot))
+		for _, t := range snapshot {
+			cols, err := d.ListColumns(ctx, t.Schema, t.Name)
+			if err != nil {
+				continue
+			}
+			defs := make([]sidebar.ColumnDef, len(cols))
+			for i, c := range cols {
+				defs[i] = sidebar.ColumnDef{Name: c.Name, DataType: c.DataType, Nullable: c.Nullable}
+			}
+			out[t.Schema+"."+t.Name] = defs
+		}
+		return AllColumnsLoadedMsg{ByTable: out}
+	}
+}
+
+func splitTableKey(k string) (schema, table string) {
+	if i := strings.Index(k, "."); i >= 0 {
+		return k[:i], k[i+1:]
+	}
+	return "", k
 }
 
 func (a *App) loadColumnsCmd(schema, tableName string) tea.Cmd {
@@ -656,13 +695,27 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case TablesLoadedMsg:
 		a.sidebar.SetTables(msg.Tables)
 		a.schemaTables = a.schemaTables[:0]
-		cmds := make([]tea.Cmd, 0, len(msg.Tables))
 		for _, t := range msg.Tables {
 			a.schemaTables = append(a.schemaTables, queryeditor.TableRef{Schema: t.Schema, Name: t.Name})
-			cmds = append(cmds, a.loadColumnsCmd(t.Schema, t.Name))
 		}
 		a.pushSchemaToEditor()
-		return a, tea.Batch(cmds...)
+		return a, a.loadAllColumnsCmd(msg.Tables)
+
+	case AllColumnsLoadedMsg:
+		if a.schemaColumnsBy == nil {
+			a.schemaColumnsBy = map[string][]queryeditor.ColumnRef{}
+		}
+		for key, cols := range msg.ByTable {
+			schema, table := splitTableKey(key)
+			a.sidebar.CacheTableColumns(schema, table, cols)
+			refs := make([]queryeditor.ColumnRef, 0, len(cols))
+			for _, c := range cols {
+				refs = append(refs, queryeditor.ColumnRef{Schema: schema, Table: table, Name: c.Name})
+			}
+			a.schemaColumnsBy[key] = refs
+		}
+		a.pushSchemaToEditor()
+		return a, nil
 
 	case ColumnsLoadedMsg:
 		a.sidebar.SetTableColumns(msg.Schema, msg.TableName, msg.Columns)

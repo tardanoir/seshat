@@ -92,6 +92,17 @@ func (m *Model) SetTableColumns(schema, tableName string, cols []ColumnDef) {
 	}
 }
 
+// CacheTableColumns populates a table's columns without changing its expansion
+// state — used for background prefetch so the sidebar doesn't auto-open.
+func (m *Model) CacheTableColumns(schema, tableName string, cols []ColumnDef) {
+	for i := range m.tables {
+		if m.tables[i].Schema == schema && m.tables[i].Name == tableName {
+			m.tables[i].Columns = cols
+			return
+		}
+	}
+}
+
 func (m Model) sectionItemCount(sec Section) int {
 	switch sec {
 	case SectionQueries:
