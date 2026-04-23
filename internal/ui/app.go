@@ -345,6 +345,7 @@ func (a *App) setFocus(f Focus) {
 	a.preview.SetFocused(f == FocusPreview)
 	a.results.SetFocused(f == FocusResults)
 	a.focus = f
+	a.layout()
 }
 
 func (a *App) layout() {
@@ -360,12 +361,28 @@ func (a *App) layout() {
 	}
 	a.mainH = mainH
 
-	previewH := 8
-	if previewH > mainH/3 {
-		previewH = mainH / 3
+	var previewH int
+	switch a.focus {
+	case FocusPreview:
+		// editor focused — expand it to roughly two-thirds of the main area
+		previewH = mainH * 2 / 3
+		if previewH < 8 {
+			previewH = 8
+		}
+	case FocusResults:
+		// results focused — shrink the editor to a compact strip
+		previewH = 4
+	default:
+		previewH = 8
+		if previewH > mainH/3 {
+			previewH = mainH / 3
+		}
 	}
 	if previewH < 3 {
 		previewH = 3
+	}
+	if previewH > mainH-3 {
+		previewH = mainH - 3
 	}
 	resultsH := mainH - previewH
 	a.previewH = previewH
