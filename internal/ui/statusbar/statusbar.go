@@ -1,7 +1,6 @@
 package statusbar
 
 import (
-	"fmt"
 	"strings"
 
 	"github.com/tardanoir/seshat/internal/ui/style"
@@ -24,11 +23,11 @@ func New() Model {
 	return Model{message: "Ready"}
 }
 
-func (m *Model) SetWidth(w int)        { m.width = w }
-func (m *Model) SetMessage(msg string) { m.message = msg; m.isError = false }
-func (m *Model) SetError(msg string)   { m.message = msg; m.isError = true }
-func (m *Model) SetFocus(f string)     { m.focus = f }
-func (m *Model) SetStmtInfo(s string)    { m.stmtInfo = s }
+func (m *Model) SetWidth(w int)           { m.width = w }
+func (m *Model) SetMessage(msg string)    { m.message = msg; m.isError = false }
+func (m *Model) SetError(msg string)      { m.message = msg; m.isError = true }
+func (m *Model) SetFocus(f string)        { m.focus = f }
+func (m *Model) SetStmtInfo(s string)     { m.stmtInfo = s }
 func (m *Model) SetUpdateHint(ver string) { m.updateHint = ver }
 
 func (m *Model) SetConnection(name, dbName string) {
@@ -38,7 +37,7 @@ func (m *Model) SetConnection(name, dbName string) {
 
 func (m *Model) SetResult(duration, rowCount string) {
 	m.isError = false
-	m.message = fmt.Sprintf("%s rows · %s", rowCount, duration)
+	m.message = rowCount + " rows · " + duration
 }
 
 func (m *Model) Clear() {
@@ -51,47 +50,49 @@ func hint(key, label string) string {
 }
 
 func (m Model) View() string {
-	dim := style.StatusSep.Render
+	sep := style.StatusSep.Render(" │ ")
 
-	// Left: connection badge + message
-	var left string
+	modeLabel := m.focus
+	if modeLabel == "" {
+		modeLabel = "READY"
+	}
+	modePill := style.StatusModePill.Render(modeLabel)
+
+	var leftChunks []string
+	leftChunks = append(leftChunks, modePill)
+
 	if m.connName != "" {
-		label := m.connName
+		connLabel := m.connName
 		if m.dbName != "" {
-			label += "/" + m.dbName
+			connLabel += "/" + m.dbName
 		}
-		left = style.StatusConn.Render(label)
+		leftChunks = append(leftChunks, style.StatusConnPill.Render(connLabel))
 	}
 
 	msg := m.message
-	if m.isError {
-		msg = style.Error.Render(msg)
-	} else {
-		msg = style.StatusMsg.Render(msg)
+	if msg != "" {
+		if m.isError {
+			leftChunks = append(leftChunks, style.Error.Render(msg))
+		} else {
+			leftChunks = append(leftChunks, style.StatusMsg.Render(msg))
+		}
 	}
-	if left != "" {
-		left += dim("  ")
-	}
-	left += msg
 
-	// Right: focus indicator + stmt info + key hints
-	var right []string
+	left := joinChunks(leftChunks, " ")
+
+	var rightChunks []string
 
 	if m.stmtInfo != "" {
-		right = append(right, dim("stmt:")+style.StatusKey.Render(m.stmtInfo))
-	}
-
-	if m.focus != "" {
-		right = append(right, style.StatusFocus.Render(m.focus))
+		rightChunks = append(rightChunks, style.StatusStmt.Render("stmt "+m.stmtInfo))
 	}
 
 	if m.updateHint != "" {
-		right = append(right, style.StatusUpdate.Render("v"+m.updateHint+" available"))
+		rightChunks = append(rightChunks, style.StatusUpdatePill.Render("v"+m.updateHint+" available"))
 	}
 
 	var hints []string
 	switch m.focus {
-	case "results":
+	case "RESULTS":
 		hints = []string{
 			hint("y", "cell"),
 			hint("Y", "row"),
@@ -108,17 +109,27 @@ func (m Model) View() string {
 			hint("?", "help"),
 		}
 	}
-	right = append(right, strings.Join(hints, dim(" ")))
+	rightChunks = append(rightChunks, strings.Join(hints, "  "))
 
-	rightStr := strings.Join(right, dim("  │  "))
+	right := joinChunks(rightChunks, sep)
 
 	leftW := lipgloss.Width(left)
-	rightW := lipgloss.Width(rightStr)
+	rightW := lipgloss.Width(right)
 	gap := m.width - leftW - rightW - 2
 	if gap < 1 {
 		gap = 1
 	}
 
-	bar := " " + left + strings.Repeat(" ", gap) + rightStr + " "
+	bar := " " + left + strings.Repeat(" ", gap) + right + " "
 	return style.StatusBar.Width(m.width).Render(bar)
+}
+
+func joinChunks(chunks []string, sep string) string {
+	out := make([]string, 0, len(chunks))
+	for _, c := range chunks {
+		if c != "" {
+			out = append(out, c)
+		}
+	}
+	return strings.Join(out, sep)
 }
