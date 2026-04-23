@@ -100,12 +100,15 @@ type App struct {
 	sidebarVisible bool
 	width          int
 	height         int
-	sidebarW int
-	mainW    int
-	mainH    int
-	previewH int
-	ready    bool
-	version  string
+	sidebarW       int
+	mainW          int
+	mainH          int
+	previewH       int
+	ready          bool
+	version        string
+
+	schemaTables    []queryeditor.TableRef
+	schemaColumnsBy map[string][]queryeditor.ColumnRef
 }
 
 func NewApp(cfg *config.Config, ver string) App {
@@ -227,6 +230,14 @@ func (a *App) loadHistoryCmd() tea.Cmd {
 		h, _ := query.LoadHistory()
 		return HistoryLoadedMsg{History: h}
 	}
+}
+
+func (a *App) pushSchemaToEditor() {
+	var cols []queryeditor.ColumnRef
+	for _, refs := range a.schemaColumnsBy {
+		cols = append(cols, refs...)
+	}
+	a.preview.SetSchema(a.schemaTables, cols)
 }
 
 func (a *App) loadTablesCmd() tea.Cmd {
@@ -417,6 +428,11 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Global keybindings
 		switch {
 		case key.Matches(msg, style.Keys.Tab):
+			if a.focus == FocusPreview && a.preview.CompletionOpen() {
+				var cmd tea.Cmd
+				a.preview, cmd = a.preview.Update(msg)
+				return a, cmd
+			}
 			a.toggleMainFocus()
 			return a, nil
 		case key.Matches(msg, style.Keys.Execute):
@@ -639,10 +655,29 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case TablesLoadedMsg:
 		a.sidebar.SetTables(msg.Tables)
-		return a, nil
+		a.schemaTables = a.schemaTables[:0]
+		cmds := make([]tea.Cmd, 0, len(msg.Tables))
+		for _, t := range msg.Tables {
+			a.schemaTables = append(a.schemaTables, queryeditor.TableRef{Schema: t.Schema, Name: t.Name})
+			cmds = append(cmds, a.loadColumnsCmd(t.Schema, t.Name))
+		}
+		a.pushSchemaToEditor()
+		return a, tea.Batch(cmds...)
 
 	case ColumnsLoadedMsg:
 		a.sidebar.SetTableColumns(msg.Schema, msg.TableName, msg.Columns)
+		if a.schemaColumnsBy == nil {
+			a.schemaColumnsBy = map[string][]queryeditor.ColumnRef{}
+		}
+		key := msg.Schema + "." + msg.TableName
+		refs := make([]queryeditor.ColumnRef, 0, len(msg.Columns))
+		for _, c := range msg.Columns {
+			refs = append(refs, queryeditor.ColumnRef{
+				Schema: msg.Schema, Table: msg.TableName, Name: c.Name,
+			})
+		}
+		a.schemaColumnsBy[key] = refs
+		a.pushSchemaToEditor()
 		return a, nil
 
 	case sidebar.RequestColumnsMsg:
