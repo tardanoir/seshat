@@ -138,10 +138,8 @@ var (
 		Foreground(ColorPrimary).Bold(true)
 
 	ModalOverlay = lipgloss.NewStyle().
-			Background(ColorBg).
 			BorderStyle(lipgloss.NormalBorder()).
 			BorderForeground(ColorBorder).
-			BorderBackground(ColorBg).
 			Padding(1, 2)
 
 	Label = lipgloss.NewStyle().
