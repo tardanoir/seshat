@@ -13,7 +13,6 @@ import (
 	"charm.land/lipgloss/v2"
 )
 
-// SQL keyword highlighting (vim mode only)
 var sqlKeywordRe = regexp.MustCompile(
 	`(?i)\b(SELECT|FROM|WHERE|INSERT|INTO|UPDATE|DELETE|CREATE|DROP|ALTER|` +
 		`TABLE|INDEX|VIEW|JOIN|LEFT|RIGHT|INNER|OUTER|FULL|CROSS|ON|AND|OR|` +
@@ -25,36 +24,47 @@ var sqlKeywordRe = regexp.MustCompile(
 		`COALESCE|CAST|TEXT|INTEGER|BOOLEAN|VARCHAR|SERIAL|BIGINT|SMALLINT|` +
 		`FLOAT|NUMERIC|TIMESTAMP|DATE|TIME|INTERVAL)\b`)
 
-const (
-	ansiKeyword = "\x1b[1;34m"  // bold blue
-	ansiReset   = "\x1b[22;39m" // reset bold+fg
-	ansiDim     = "\x1b[2m"
-	ansiDimEnd  = "\x1b[22m"
-	ansiMagenta = "\x1b[35m"
-	ansiCyan    = "\x1b[1;36m"
-	ansiFull    = "\x1b[0m"
+var (
+	keywordStyle = lipgloss.NewStyle().
+			Foreground(style.ColorCyan).
+			Bold(true)
+
+	lineNumStyle = lipgloss.NewStyle().
+			Foreground(style.ColorMuted)
+
+	markerStyle = lipgloss.NewStyle().
+			Foreground(style.ColorPrimary)
+
+	tildeStyle = lipgloss.NewStyle().
+			Foreground(style.ColorMuted)
+
+	textStyle = lipgloss.NewStyle().
+			Foreground(style.ColorText)
+
+	headerLabel = lipgloss.NewStyle().
+			Foreground(style.ColorSubtext)
+
+	headerLabelFocused = lipgloss.NewStyle().
+				Foreground(style.ColorText).
+				Bold(true)
 )
 
 func highlightSQL(s string) string {
 	return sqlKeywordRe.ReplaceAllStringFunc(s, func(match string) string {
-		return ansiKeyword + match + ansiReset
+		return keywordStyle.Render(match)
 	})
 }
 
-// Model is the query editor, supporting both vim (read-only) and insert (textarea) modes.
 type Model struct {
 	vimMode bool
 
-	// textarea mode
 	ta       textarea.Model
 	selRange *[2]int
 
-	// vim mode
 	sql     string
 	cursor  int
 	scrollY int
 
-	// shared
 	stmts   []statement
 	width   int
 	height  int
@@ -70,8 +80,7 @@ type statement struct {
 func New(vimMode bool) Model {
 	m := Model{vimMode: vimMode, focused: true}
 
-	if vimMode {
-	} else {
+	if !vimMode {
 		ta := textarea.New()
 		ta.Placeholder = "Write a query or press Ctrl+E to open your editor"
 		ta.ShowLineNumbers = true
@@ -79,7 +88,6 @@ func New(vimMode bool) Model {
 		ta.SetHeight(4)
 		ta.CharLimit = 0
 
-		// Unbind keys that conflict with app-level keybindings.
 		ta.KeyMap.LineEnd = key.NewBinding(key.WithKeys("end"))
 		ta.KeyMap.DeleteWordBackward = key.NewBinding(key.WithKeys("alt+backspace"))
 		ta.KeyMap.DeleteCharacterForward = key.NewBinding(key.WithKeys("delete"))
@@ -92,27 +100,36 @@ func New(vimMode bool) Model {
 		ta.KeyMap.DeleteBeforeCursor = key.NewBinding(key.WithKeys("alt+backspace"))
 		ta.KeyMap.DeleteAfterCursor = key.NewBinding(key.WithDisabled())
 
-		// Statement selection marker via prompt func.
 		sel := &[2]int{-1, -1}
 		ta.SetPromptFunc(2, func(info textarea.PromptInfo) string {
 			if info.LineNumber >= sel[0] && info.LineNumber <= sel[1] {
-				return lipgloss.NewStyle().Foreground(style.ColorPrimary).Render("▎") + " "
+				return markerStyle.Render("▎") + " "
 			}
 			return "  "
 		})
 
-		// Style: no border on the textarea itself — View() wraps it in a border.
 		s := ta.Styles()
-		s.Focused.Base = lipgloss.NewStyle()
-		s.Blurred.Base = lipgloss.NewStyle()
-		s.Focused.EndOfBuffer = lipgloss.NewStyle().Foreground(style.ColorBorder)
-		s.Blurred.EndOfBuffer = lipgloss.NewStyle().Foreground(style.ColorBorder)
-		s.Focused.LineNumber = lipgloss.NewStyle().Foreground(style.ColorBorder)
-		s.Blurred.LineNumber = lipgloss.NewStyle().Foreground(style.ColorBorder)
+		empty := lipgloss.NewStyle()
+		text := lipgloss.NewStyle().Foreground(style.ColorText)
+		placeholder := lipgloss.NewStyle().Foreground(style.ColorMuted)
+
+		s.Focused.Base = empty
+		s.Blurred.Base = empty
+		s.Focused.Text = text
+		s.Blurred.Text = text
+		s.Focused.Placeholder = placeholder
+		s.Blurred.Placeholder = placeholder
+		s.Focused.Prompt = empty
+		s.Blurred.Prompt = empty
+		s.Focused.EndOfBuffer = tildeStyle
+		s.Blurred.EndOfBuffer = tildeStyle
+		s.Focused.LineNumber = lineNumStyle
+		s.Blurred.LineNumber = lineNumStyle
 		s.Focused.CursorLineNumber = lipgloss.NewStyle().Foreground(style.ColorText)
-		s.Blurred.CursorLineNumber = lipgloss.NewStyle().Foreground(style.ColorBorder)
-		s.Focused.CursorLine = lipgloss.NewStyle()
-		s.Blurred.CursorLine = lipgloss.NewStyle()
+		s.Blurred.CursorLineNumber = lineNumStyle
+		s.Focused.CursorLine = empty
+		s.Blurred.CursorLine = empty
+		s.Cursor.Color = style.ColorPrimary
 		ta.SetStyles(s)
 
 		ta.Focus()
@@ -205,8 +222,9 @@ func (m *Model) SetSize(w, h int) {
 	m.width = w
 	m.height = h
 	if !m.vimMode {
-		m.ta.SetWidth(w - 2)
-		m.ta.SetHeight(h - 2)
+		// inner width = w - hPad ; inner height = h - 1 (header row)
+		m.ta.SetWidth(w - 4)
+		m.ta.SetHeight(h - 1)
 	}
 }
 
@@ -216,8 +234,6 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	}
 	return m.updateTextarea(msg)
 }
-
-// ── Textarea mode ──────────────────────────────────────────
 
 func (m Model) updateTextarea(msg tea.Msg) (Model, tea.Cmd) {
 	if !m.ta.Focused() {
@@ -229,16 +245,6 @@ func (m Model) updateTextarea(msg tea.Msg) (Model, tea.Cmd) {
 	m.updateSelRange()
 	return m, cmd
 }
-
-func (m Model) viewTextarea() string {
-	s := style.Editor
-	if m.ta.Focused() {
-		s = style.Focused
-	}
-	return s.Width(m.width - 2).Render(m.ta.View())
-}
-
-// ── Vim mode ───────────────────────────────────────────────
 
 func (m Model) updateVim(msg tea.Msg) (Model, tea.Cmd) {
 	if !m.focused {
@@ -266,7 +272,7 @@ func (m *Model) ensureVisible() {
 	if len(m.stmts) == 0 {
 		return
 	}
-	vh := m.viewHeight()
+	vh := m.contentHeight()
 	stmt := m.stmts[m.cursor]
 	if stmt.startLine < m.scrollY {
 		m.scrollY = stmt.startLine
@@ -279,25 +285,32 @@ func (m *Model) ensureVisible() {
 	}
 }
 
-func (m Model) viewHeight() int {
-	h := m.height - 2
+func (m Model) contentHeight() int {
+	h := m.height - 1
 	if h < 1 {
 		h = 1
 	}
 	return h
 }
 
-func (m Model) viewVim() string {
-	s := style.Editor
-	if m.focused {
-		s = style.Focused
+func (m Model) contentWidth() int {
+	w := m.width - 4
+	if w < 10 {
+		w = 10
 	}
+	return w
+}
 
-	innerH := m.viewHeight()
-	innerW := m.width - 4
-	if innerW < 10 {
-		innerW = 10
+func (m Model) renderHeader() string {
+	if m.Focused() {
+		return headerLabelFocused.Render("EDITOR")
 	}
+	return headerLabel.Render("EDITOR")
+}
+
+func (m Model) viewVim() string {
+	innerH := m.contentHeight()
+	innerW := m.contentWidth()
 
 	allLines := strings.Split(m.sql, "\n")
 
@@ -315,26 +328,39 @@ func (m Model) viewVim() string {
 	var rendered []string
 	for i := m.scrollY; i < endLine; i++ {
 		line := allLines[i]
-		lineNum := ansiDim + padRight(fmt.Sprintf("%d", i+1), 3) + ansiDimEnd
-
+		numLabel := padRight(fmt.Sprintf("%d", i+1), 3)
 		selected := i >= selStart && i <= selEnd
+
+		var prefix string
 		if selected {
-			lineNum = ansiMagenta + "▎" + ansiFull + lineNum
+			prefix = markerStyle.Render("▎") + lineNumStyle.Render(numLabel)
 		} else {
-			lineNum = " " + lineNum
+			prefix = " " + lineNumStyle.Render(numLabel)
 		}
 
 		hl := highlightSQL(truncate(line, innerW-6))
-		rendered = append(rendered, lineNum+" "+hl)
+		rendered = append(rendered, prefix+" "+textStyle.Render(hl))
 	}
 
 	for len(rendered) < innerH {
-		rendered = append(rendered, " "+ansiDim+"~"+ansiDimEnd)
+		rendered = append(rendered, " "+tildeStyle.Render("~"))
 	}
 	rendered = rendered[:innerH]
 
-	content := strings.Join(rendered, "\n")
-	return s.Width(m.width - 2).Render(content)
+	header := m.renderHeader()
+	body := strings.Join(rendered, "\n")
+	content := header + "\n" + body
+	content = style.PrefixFocusBar(content, m.focused)
+
+	return style.Editor.Width(m.width).Height(m.height).MaxHeight(m.height).Render(content)
+}
+
+func (m Model) viewTextarea() string {
+	header := m.renderHeader()
+	body := m.ta.View()
+	content := header + "\n" + body
+	content = style.PrefixFocusBar(content, m.ta.Focused())
+	return style.Editor.Width(m.width).Height(m.height).MaxHeight(m.height).Render(content)
 }
 
 func (m Model) View() string {

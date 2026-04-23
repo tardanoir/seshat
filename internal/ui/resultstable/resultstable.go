@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/atotto/clipboard"
 
 	"github.com/tardanoir/seshat/internal/db"
@@ -138,12 +139,11 @@ func (m *Model) computeColumnWidths() {
 		m.totalW += (n - 1) * 3
 	}
 
-	// Cache the separator line.
 	sepParts := make([]string, n)
 	for i, w := range m.colWidths {
-		sepParts[i] = strings.Repeat("-", w)
+		sepParts[i] = strings.Repeat(" ", w)
 	}
-	m.separator = strings.Join(sepParts, "-+-")
+	m.separator = strings.Join(sepParts, "   ")
 }
 
 func formatCell(v string) string {
@@ -160,8 +160,9 @@ func formatCell(v string) string {
 	return v
 }
 
+// Layout: header line (1) + column headers (1) + data rows + footer (1).
 func (m Model) viewportHeight() int {
-	h := m.height - 6
+	h := m.height - 4
 	if h < 1 {
 		h = 1
 	}
@@ -169,7 +170,7 @@ func (m Model) viewportHeight() int {
 }
 
 func (m Model) viewportWidth() int {
-	w := m.width - 6
+	w := m.width - 4
 	if w < 10 {
 		w = 10
 	}
@@ -318,7 +319,7 @@ func (m Model) buildRow(cells []string) string {
 	sb.Grow(m.totalW)
 	for i, w := range m.colWidths {
 		if i > 0 {
-			sb.WriteString(" | ")
+			sb.WriteString("   ")
 		}
 		cell := ""
 		if i < len(cells) {
@@ -329,49 +330,85 @@ func (m Model) buildRow(cells []string) string {
 	return sb.String()
 }
 
-// ANSI escape helpers
-const (
-	ansiBoldCyan     = "\x1b[1;36m"
-	ansiDim          = "\x1b[2m"
-	ansiBoldMagBg    = "\x1b[1;35;100m"
-	ansiSelectedCell = "\x1b[1;36;100m"
-	ansiReset        = "\x1b[0m"
-	ansiSubtext      = "\x1b[97m"
+// Styles for inline rendering inside the results view. No backgrounds
+// on plain text — let the terminal's bg show through. Only selection
+// highlights paint a subtle bg for contrast.
+var (
+	rTextDim = lipgloss.NewStyle().Foreground(style.ColorSubtext)
+
+	rTextMuted = lipgloss.NewStyle().Foreground(style.ColorMuted)
+
+	rText = lipgloss.NewStyle().Foreground(style.ColorText)
+
+	rAccent = lipgloss.NewStyle().
+		Foreground(style.ColorPrimary).
+		Bold(true)
+
+	rAccentIdle = lipgloss.NewStyle().Foreground(style.ColorSubtext)
+
+	rHeaderCol = lipgloss.NewStyle().Foreground(style.ColorSubtext)
+
+	rCellSelected = lipgloss.NewStyle().
+			Foreground(style.ColorPrimary).
+			Bold(true).
+			Background(style.ColorHighlight)
+
+	rRowSelected = lipgloss.NewStyle().
+			Foreground(style.ColorText).
+			Background(style.ColorHighlight)
+
+	rColHeaderSelected = lipgloss.NewStyle().
+				Foreground(style.ColorPrimary).
+				Bold(true).
+				Underline(true)
 )
 
-func (m Model) View() string {
-	borderStyle := style.Results
-	if m.focused {
-		borderStyle = style.Focused
+func (m Model) renderHeader() string {
+	status := "READY"
+	styAccent := rAccentIdle
+	if m.focused && !m.empty {
+		styAccent = rAccent
 	}
+	if m.err != "" {
+		status = "ERROR"
+		styAccent = lipgloss.NewStyle().
+			Foreground(style.ColorError).
+			Bold(true)
+	} else if !m.empty && m.result != nil {
+		if m.result.IsSelect {
+			status = fmt.Sprintf("%d ROWS · %s", len(m.result.Rows), strings.ToUpper(m.result.Duration.String()))
+		} else {
+			status = fmt.Sprintf("%d AFFECTED · %s", m.result.RowsAffected, strings.ToUpper(m.result.Duration.String()))
+		}
+	}
+	return rTextDim.Render("RESULTS") + rTextMuted.Render(" · ") + styAccent.Render(status)
+}
 
-	innerH := m.height - 2
+func (m Model) View() string {
+	innerH := m.height - 1 // minus 1 for header
 	if innerH < 1 {
 		innerH = 1
 	}
 
 	var lines []string
+	lines = append(lines, m.renderHeader())
+
 	if m.err != "" {
 		lines = append(lines, style.Error.Render("Error: "+m.err))
 	} else if m.empty {
-		lines = append(lines, style.ListItem.Render("No results. Execute a query with Ctrl+R."))
+		lines = append(lines, rTextDim.Render("No results. Execute a query with Ctrl+R."))
 	} else {
 		vw := m.viewportWidth()
 		vh := m.viewportHeight()
 
-		// Header with selected column highlight
-		headerRow := m.buildRow(m.result.Columns)
-		visibleHeader := sliceVisible(headerRow, m.scrollX, vw)
-
+		// Column header row
 		if m.focused {
-			lines = append(lines, m.buildHighlightedRow(m.result.Columns, vw, ansiBoldCyan))
+			lines = append(lines, m.buildHeaderRow(vw))
 		} else {
-			lines = append(lines, ansiBoldCyan+visibleHeader+ansiReset)
+			headerRow := m.buildRow(m.result.Columns)
+			visibleHeader := sliceVisible(headerRow, m.scrollX, vw)
+			lines = append(lines, rHeaderCol.Render(visibleHeader))
 		}
-
-		// Separator (cached)
-		visibleSep := sliceVisible(m.separator, m.scrollX, vw)
-		lines = append(lines, ansiDim+visibleSep+ansiReset)
 
 		// Data rows
 		endRow := m.scrollY + vh
@@ -384,7 +421,7 @@ func (m Model) View() string {
 			} else {
 				fullRow := m.buildRow(m.ensureFormatted(i))
 				visibleRow := sliceVisible(fullRow, m.scrollX, vw)
-				lines = append(lines, visibleRow)
+				lines = append(lines, rText.Render(visibleRow))
 			}
 		}
 
@@ -394,9 +431,9 @@ func (m Model) View() string {
 			if m.cursorX < len(m.result.Columns) {
 				colName = m.result.Columns[m.cursorX]
 			}
-			rowInfo := fmt.Sprintf(" %d rows", len(m.result.Rows))
+			rowInfo := fmt.Sprintf("%d rows", len(m.result.Rows))
 			if !m.result.IsSelect {
-				rowInfo = fmt.Sprintf(" %d rows affected", m.result.RowsAffected)
+				rowInfo = fmt.Sprintf("%d rows affected", m.result.RowsAffected)
 			}
 			rowPos := fmt.Sprintf("  [%d/%d]", m.cursorY+1, len(m.cells))
 			colInfo := fmt.Sprintf("  col:%s", colName)
@@ -409,18 +446,18 @@ func (m Model) View() string {
 				}
 				scrollHint = fmt.Sprintf("  ←→%d%%", pct)
 			}
-			lines = append(lines, ansiSubtext+rowInfo+rowPos+colInfo+scrollHint+ansiReset)
+			lines = append(lines, rTextDim.Render(rowInfo+rowPos+colInfo+scrollHint))
 		}
 	}
 
-	// Pad to exact inner height
-	for len(lines) < innerH {
+	for len(lines) < innerH+1 {
 		lines = append(lines, "")
 	}
-	lines = lines[:innerH]
+	lines = lines[:innerH+1]
 
 	content := strings.Join(lines, "\n")
-	return borderStyle.Width(m.width - 2).Render(content)
+	content = style.PrefixFocusBar(content, m.focused)
+	return style.Results.Width(m.width).Height(m.height).MaxHeight(m.height).Render(content)
 }
 
 func (m *Model) buildCursorRow(vw int) string {
@@ -445,16 +482,16 @@ func (m *Model) buildCursorRow(vw int) string {
 		before := string(runes[:colStart])
 		cell := string(runes[colStart:colEnd])
 		after := string(runes[colEnd:])
-		return ansiBoldMagBg + before + ansiReset +
-			ansiSelectedCell + cell + ansiReset +
-			ansiBoldMagBg + after + ansiReset
+		return rRowSelected.Render(before) +
+			rCellSelected.Render(cell) +
+			rRowSelected.Render(after)
 	}
 
-	return ansiBoldMagBg + visibleRow + ansiReset
+	return rRowSelected.Render(visibleRow)
 }
 
-func (m Model) buildHighlightedRow(cells []string, vw int, baseAnsi string) string {
-	fullRow := m.buildRow(cells)
+func (m Model) buildHeaderRow(vw int) string {
+	fullRow := m.buildRow(m.result.Columns)
 	visibleRow := sliceVisible(fullRow, m.scrollX, vw)
 	runes := []rune(visibleRow)
 
@@ -475,12 +512,12 @@ func (m Model) buildHighlightedRow(cells []string, vw int, baseAnsi string) stri
 		before := string(runes[:colStart])
 		cell := string(runes[colStart:colEnd])
 		after := string(runes[colEnd:])
-		return baseAnsi + before + ansiReset +
-			"\x1b[1;36;4m" + cell + ansiReset +
-			baseAnsi + after + ansiReset
+		return rHeaderCol.Render(before) +
+			rColHeaderSelected.Render(cell) +
+			rHeaderCol.Render(after)
 	}
 
-	return baseAnsi + visibleRow + ansiReset
+	return rHeaderCol.Render(visibleRow)
 }
 
 func (m Model) ResultSummary() string {

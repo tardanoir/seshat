@@ -33,7 +33,7 @@ func (t TableEntry) DisplayName() string {
 	if t.Schema != "" && t.Schema != "public" {
 		return t.Schema + "." + t.Name
 	}
-	return t.Name
+	return "public." + t.Name
 }
 
 type Section int
@@ -59,9 +59,9 @@ type Model struct {
 	tables    []TableEntry
 	history   []query.HistoryEntry
 
-	activeSection Section // which panel is expanded
-	cursor        int     // item index within the active section
-	scrollY       int     // scroll offset within the active panel
+	activeSection Section
+	cursor        int
+	scrollY       int
 }
 
 func New() Model {
@@ -77,10 +77,10 @@ func (m *Model) SetConnection(name, db string) {
 	m.connDB = db
 }
 
-func (m *Model) SetQueries(q []query.SavedQuery)      { m.queries = q }
-func (m *Model) SetTemplates(t []query.Template)      { m.templates = t }
-func (m *Model) SetTables(tables []TableEntry)        { m.tables = tables }
-func (m *Model) SetHistory(h []query.HistoryEntry)    { m.history = h }
+func (m *Model) SetQueries(q []query.SavedQuery)   { m.queries = q }
+func (m *Model) SetTemplates(t []query.Template)   { m.templates = t }
+func (m *Model) SetTables(tables []TableEntry)     { m.tables = tables }
+func (m *Model) SetHistory(h []query.HistoryEntry) { m.history = h }
 
 func (m *Model) SetTableColumns(schema, tableName string, cols []ColumnDef) {
 	for i := range m.tables {
@@ -169,11 +169,9 @@ func (m Model) handleEnter() (Model, tea.Cmd) {
 			return m, func() tea.Msg { return SelectTemplateMsg{Template: t} }
 		}
 	case SectionTables:
-		// Map cursor to table/column
 		idx := 0
 		for i := range m.tables {
 			if idx == m.cursor {
-				// Toggle table expansion
 				if m.tables[i].Expanded {
 					m.tables[i].Expanded = false
 				} else if len(m.tables[i].Columns) > 0 {
@@ -191,7 +189,6 @@ func (m Model) handleEnter() (Model, tea.Cmd) {
 			if m.tables[i].Expanded {
 				for range m.tables[i].Columns {
 					if idx == m.cursor {
-						// Column selected — no action for now
 						return m, nil
 					}
 					idx++
@@ -215,29 +212,42 @@ func (m Model) handleDelete() (Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m Model) View() string {
-	innerW := m.width - 6 // please work
-	if innerW < 4 {
-		innerW = 4
+const hPadTotal = 3
+
+func (m Model) innerWidth() int {
+	w := m.width - hPadTotal - 1
+	if w < 10 {
+		w = 10
 	}
-	innerH := m.height - 2 // outer border
-	if innerH < 3 {
-		innerH = 3
+	return w
+}
+
+func (m Model) View() string {
+	innerW := m.innerWidth()
+	innerH := m.height
+	if innerH < 5 {
+		innerH = 5
 	}
 
-	// Build all lines manually to guarantee exact height.
-	// Line budget: connHeader(1) + per-section(title line) + expanded body lines
 	var allLines []string
 
-	// Connection header
-	connLabel := m.connName
-	if m.connDB != "" {
-		connLabel += "/" + m.connDB
-	}
-	allLines = append(allLines, style.StatusConn.Render(trunc(connLabel, innerW)))
+	allLines = append(allLines, style.PanelTitle.Render("CONNECTION"))
 
-	// Fixed lines: 1 (conn) + 3 (section titles)
-	fixedLines := 1 + int(sectionCount)
+	if m.connName != "" {
+		dot := style.ConnDot.Render("●")
+		name := style.ConnName.Render(m.connName)
+		allLines = append(allLines, dot+" "+name)
+	} else {
+		allLines = append(allLines, style.PanelTitle.Render("● (not connected)"))
+	}
+
+	if m.connDB != "" {
+		allLines = append(allLines, style.StatusMsg.Render(trunc(m.connDB, innerW)))
+	} else {
+		allLines = append(allLines, "")
+	}
+	
+	fixedLines := len(allLines) + int(sectionCount)
 	bodyH := innerH - fixedLines
 	if bodyH < 1 {
 		bodyH = 1
@@ -248,13 +258,12 @@ func (m Model) View() string {
 		if sec == m.activeSection {
 			titleStyle := style.PanelTitleActive
 			if !m.focused {
-				titleStyle = style.PanelTitle
+				titleStyle = style.PanelTitle.Bold(true)
 			}
 			allLines = append(allLines, titleStyle.Render(title))
-			// Expanded body
+
 			bodyLines := m.buildSectionLines(sec, innerW)
 
-			// Scroll
 			curVL := m.cursorToVisualLine(sec)
 			scrollY := m.scrollY
 			if curVL < scrollY {
@@ -288,40 +297,40 @@ func (m Model) View() string {
 		}
 	}
 
-	// Ensure exact height
+	if len(allLines) > innerH {
+		allLines = allLines[:innerH]
+	}
 	for len(allLines) < innerH {
 		allLines = append(allLines, "")
 	}
-	allLines = allLines[:innerH]
 
 	content := strings.Join(allLines, "\n")
-
-	s := style.Sidebar
-	if m.focused {
-		s = style.Focused
-	}
-	return s.Width(m.width - 2).Height(innerH).Render(content)
+	content = style.PrefixFocusBar(content, m.focused)
+	return style.Sidebar.
+		Width(m.width).
+		Height(innerH).
+		MaxHeight(innerH).
+		Render(content)
 }
 
 func (m Model) sectionTitle(sec Section) string {
 	switch sec {
 	case SectionQueries:
-		return fmt.Sprintf("1 Queries (%d)", len(m.queries))
+		return fmt.Sprintf("1 QUERIES (%d)", len(m.queries))
 	case SectionTemplates:
-		return fmt.Sprintf("2 Templates (%d)", len(m.templates))
+		return fmt.Sprintf("2 TEMPLATES (%d)", len(m.templates))
 	case SectionTables:
-		return fmt.Sprintf("3 Tables (%d)", len(m.tables))
+		return fmt.Sprintf("3 TABLES (%d)", len(m.tables))
 	case SectionHistory:
-		return fmt.Sprintf("4 History (%d)", len(m.history))
+		return fmt.Sprintf("4 HISTORY (%d)", len(m.history))
 	}
 	return ""
 }
 
 func (m Model) cursorToVisualLine(sec Section) int {
 	if sec != SectionTables {
-		return m.cursor // 1:1 for queries and templates
+		return m.cursor
 	}
-	// Tables: each table = 1 line, each column = 2 lines (name + type)
 	visualLine := 0
 	idx := 0
 	for _, t := range m.tables {
@@ -359,7 +368,7 @@ func (m Model) buildSectionLines(sec Section, maxW int) []string {
 
 func (m Model) buildQueryLines(maxW int) []string {
 	if len(m.queries) == 0 {
-		return []string{"\x1b[2m(none)\x1b[22m"}
+		return []string{style.StatusMsg.Render("(none)")}
 	}
 	var lines []string
 	for i, q := range m.queries {
@@ -375,7 +384,7 @@ func (m Model) buildQueryLines(maxW int) []string {
 
 func (m Model) buildTemplateLines(maxW int) []string {
 	if len(m.templates) == 0 {
-		return []string{"\x1b[2m(none)\x1b[22m"}
+		return []string{style.StatusMsg.Render("(none)")}
 	}
 	var lines []string
 	for i, t := range m.templates {
@@ -395,35 +404,61 @@ func (m Model) buildTemplateLines(maxW int) []string {
 
 func (m Model) buildTableLines(maxW int) []string {
 	if len(m.tables) == 0 {
-		return []string{"\x1b[2m(none)\x1b[22m"}
+		return []string{style.StatusMsg.Render("(none)")}
 	}
 	var lines []string
 	idx := 0
-	colNameMax := maxW - 6
-	if colNameMax < 5 {
-		colNameMax = 5
-	}
+
 	for _, t := range m.tables {
+		selected := m.focused && m.activeSection == SectionTables && idx == m.cursor
 		arrow := "▶"
 		if t.Expanded {
 			arrow = "▼"
 		}
-		label := trunc(arrow+" "+t.DisplayName(), maxW-3)
-		if m.focused && m.activeSection == SectionTables && idx == m.cursor {
-			lines = append(lines, style.TableNameSelected.Render("▸ "+label))
+		if selected {
+			arrow = "▸"
+		}
+
+		label := trunc(t.DisplayName(), maxW-4)
+		if selected {
+			lines = append(lines, style.TableNameSelected.Render(arrow+" "+label))
 		} else {
-			lines = append(lines, style.TableName.Render(label))
+			lines = append(lines, style.TableName.Render(arrow+" "+label))
 		}
 		idx++
 
 		if t.Expanded {
+			colNameW := 0
 			for _, col := range t.Columns {
-				colText := col.Name + " " + style.ColumnType.Render(col.DataType)
-				colText = trunc(colText, colNameMax)
-				if m.focused && m.activeSection == SectionTables && idx == m.cursor {
-					lines = append(lines, style.ColumnItemSelected.Render("▸ "+colText))
+				if len(col.Name) > colNameW {
+					colNameW = len(col.Name)
+				}
+			}
+			if colNameW > maxW/2 {
+				colNameW = maxW / 2
+			}
+
+			for _, col := range t.Columns {
+				colSel := m.focused && m.activeSection == SectionTables && idx == m.cursor
+
+				leftChrome := 7
+				if colSel {
+					leftChrome = 6
+				}
+				typeAvail := maxW - leftChrome - colNameW
+				if typeAvail < 4 {
+					typeAvail = 4
+				}
+				dataType := trunc(col.DataType, typeAvail)
+				name := trunc(col.Name, colNameW)
+
+				if colSel {
+					row := "▸ " + padRight(name, colNameW) + " " + dataType
+					lines = append(lines, style.ColumnItemSelected.Render(row))
 				} else {
-					lines = append(lines, style.ColumnItem.Render(colText))
+					styledName := style.TableName.Render(padRight(name, colNameW))
+					styledType := style.ColumnType.Render(dataType)
+					lines = append(lines, "    "+styledName+" "+styledType)
 				}
 				idx++
 			}
@@ -434,7 +469,7 @@ func (m Model) buildTableLines(maxW int) []string {
 
 func (m Model) buildHistoryLines(maxW int) []string {
 	if len(m.history) == 0 {
-		return []string{"\x1b[2m(none)\x1b[22m"}
+		return []string{style.StatusMsg.Render("(none)")}
 	}
 	var lines []string
 	for i, h := range m.history {
@@ -442,7 +477,7 @@ func (m Model) buildHistoryLines(maxW int) []string {
 		sql = strings.ReplaceAll(sql, "\r", "")
 		sql = strings.ReplaceAll(sql, "\t", " ")
 		ts := h.Timestamp.Local().Format("15:04")
-		name := trunc(sql+" "+ts, maxW-3)
+		name := trunc(sql+"  "+ts, maxW-3)
 		if m.focused && m.activeSection == SectionHistory && i == m.cursor {
 			lines = append(lines, style.ListSelected.Render("▸ "+name))
 		} else {
@@ -461,4 +496,12 @@ func trunc(s string, maxW int) string {
 		return string(r[:maxW])
 	}
 	return string(r[:maxW-1]) + "…"
+}
+
+func padRight(s string, width int) string {
+	r := []rune(s)
+	if len(r) >= width {
+		return s
+	}
+	return s + strings.Repeat(" ", width-len(r))
 }

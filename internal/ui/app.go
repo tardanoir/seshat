@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/tardanoir/seshat/internal/config"
@@ -21,7 +22,6 @@ import (
 
 	"charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
-	"charm.land/lipgloss/v2"
 )
 
 type Focus int
@@ -100,8 +100,12 @@ type App struct {
 	sidebarVisible bool
 	width          int
 	height         int
-	ready          bool
-	version        string
+	sidebarW int
+	mainW    int
+	mainH    int
+	previewH int
+	ready    bool
+	version  string
 }
 
 func NewApp(cfg *config.Config, ver string) App {
@@ -298,7 +302,14 @@ func (a *App) layout() {
 		return
 	}
 
-	mainH := a.height - 1 // status bar = 1 row
+	innerW := a.width - 2
+	innerH := a.height - 2
+	mainH := innerH - 2
+	if mainH < 3 {
+		mainH = 3
+	}
+	a.mainH = mainH
+
 	previewH := 8
 	if previewH > mainH/3 {
 		previewH = mainH / 3
@@ -307,24 +318,29 @@ func (a *App) layout() {
 		previewH = 3
 	}
 	resultsH := mainH - previewH
+	a.previewH = previewH
 
 	if a.sidebarVisible {
-		sidebarW := a.width / 4
+		sidebarW := (innerW - 1) / 4
 		if sidebarW < 25 {
 			sidebarW = 25
 		}
 		if sidebarW > 50 {
 			sidebarW = 50
 		}
-		mainW := a.width - sidebarW
-		a.sidebar.SetSize(sidebarW, mainH)
-		a.preview.SetSize(mainW, previewH)
+		mainW := innerW - 1 - sidebarW
+		a.sidebarW = sidebarW
+		a.mainW = mainW
+		a.sidebar.SetSize(sidebarW, mainH-1)
+		a.preview.SetSize(mainW, previewH-1)
 		a.results.SetSize(mainW, resultsH)
 	} else {
-		a.preview.SetSize(a.width, previewH)
-		a.results.SetSize(a.width, resultsH)
+		a.sidebarW = 0
+		a.mainW = innerW
+		a.preview.SetSize(innerW, previewH-1)
+		a.results.SetSize(innerW, resultsH)
 	}
-	a.status.SetWidth(a.width)
+	a.status.SetWidth(innerW)
 
 	a.connModal.SetSize(a.width, a.height)
 	a.addConnModal.SetSize(a.width, a.height)
@@ -779,11 +795,11 @@ func (a App) View() tea.View {
 	// Update status bar dynamic info
 	switch a.focus {
 	case FocusSidebar:
-		a.status.SetFocus("sidebar")
+		a.status.SetFocus("SIDEBAR")
 	case FocusPreview:
-		a.status.SetFocus("query")
+		a.status.SetFocus("EDITOR")
 	case FocusResults:
-		a.status.SetFocus("results")
+		a.status.SetFocus("RESULTS")
 	}
 	if a.preview.StmtCount() > 1 {
 		a.status.SetStmtInfo(fmt.Sprintf("%d/%d", a.preview.StmtIndex()+1, a.preview.StmtCount()))
@@ -795,15 +811,12 @@ func (a App) View() tea.View {
 	resultsView := a.results.View()
 	statusView := a.status.View()
 
-	rightPane := lipgloss.JoinVertical(lipgloss.Left, previewView, resultsView)
-	var mainArea string
+	var sidebarView string
 	if a.sidebarVisible {
-		sidebarView := a.sidebar.View()
-		mainArea = lipgloss.JoinHorizontal(lipgloss.Top, sidebarView, rightPane)
-	} else {
-		mainArea = rightPane
+		sidebarView = a.sidebar.View()
 	}
-	full := lipgloss.JoinVertical(lipgloss.Left, mainArea, statusView)
+
+	full := a.composeFrame(sidebarView, previewView, resultsView, statusView)
 
 	switch a.modalState {
 	case ModalConnection:
@@ -825,4 +838,155 @@ func (a App) View() tea.View {
 	}
 
 	return view(full)
+}
+
+// this was a pain in the ass to find
+const (
+	bxTL  = "┌"
+	bxTR  = "┐"
+	bxBL  = "└"
+	bxBR  = "┘"
+	bxH   = "─"
+	bxV   = "│"
+	bxTR_ = "├"
+	bxTL_ = "┤"
+	bxTD  = "┬"
+	bxTU  = "┴"
+	bxX   = "┼"
+)
+
+func (a App) composeFrame(sidebar, preview, results, status string) string {
+	fs := style.FrameStyle.Render
+
+	innerW := a.width - 2
+	mainH := a.mainH
+	sidebarW := a.sidebarW
+	mainW := a.mainW
+
+	if !a.sidebarVisible {
+		sidebarW = 0
+		mainW = innerW
+	}
+
+	h := func(n int) string {
+		if n <= 0 {
+			return ""
+		}
+		return strings.Repeat(bxH, n)
+	}
+	sp := func(n int) string {
+		if n <= 0 {
+			return ""
+		}
+		return strings.Repeat(" ", n)
+	}
+
+	sidebarRows := splitRows(sidebar)
+	previewRows := splitRows(preview)
+	resultsRows := splitRows(results)
+
+	editorBottomRow := len(previewRows)
+	const sidebarHRrow = 3
+
+	var rows []string
+
+	// top
+	if a.sidebarVisible {
+		rows = append(rows, fs(bxTL+h(sidebarW)+bxTD+h(mainW)+bxTR))
+	} else {
+		rows = append(rows, fs(bxTL+h(mainW)+bxTR))
+	}
+
+	// pane
+	for y := 0; y < mainH; y++ {
+		// sidebar cell for the side row
+		var sl string
+		atSidebarHR := a.sidebarVisible && y == sidebarHRrow
+		if a.sidebarVisible {
+			switch {
+			case atSidebarHR:
+				sl = fs(h(sidebarW))
+			case y < sidebarHRrow:
+				if y < len(sidebarRows) {
+					sl = sidebarRows[y]
+				} else {
+					sl = sp(sidebarW)
+				}
+			default:
+				// y > sidebarHRrow — sidebar rows shift down by 1.
+				sidebarY := y - 1
+				if sidebarY < len(sidebarRows) {
+					sl = sidebarRows[sidebarY]
+				} else {
+					sl = sp(sidebarW)
+				}
+			}
+		}
+
+		// main cell
+		var ml string
+		atEditorBottom := y == editorBottomRow
+		switch {
+		case atEditorBottom:
+			ml = fs(h(mainW))
+				ml = previewRows[y]
+			} else {
+				ml = sp(mainW)
+			}
+		default:
+			idx := y - editorBottomRow - 1
+			if idx < len(resultsRows) {
+				ml = resultsRows[idx]
+			} else {
+				ml = sp(mainW)
+			}
+		}
+
+		// borders
+		leftCh := bxV
+		rightCh := bxV
+		sidebarDivCh := bxV
+
+		if atSidebarHR {
+			leftCh = bxTR_
+			sidebarDivCh = bxTL_
+		}
+		if atEditorBottom {
+			if a.sidebarVisible {
+				// connection with the sidebar div
+				sidebarDivCh = bxTR_
+				if atSidebarHR {
+					sidebarDivCh = bxX
+				}
+			} else {
+				leftCh = bxTR_
+			}
+			rightCh = bxTL_
+		}
+
+		if a.sidebarVisible {
+			rows = append(rows, fs(leftCh)+sl+fs(sidebarDivCh)+ml+fs(rightCh))
+		} else {
+			rows = append(rows, fs(leftCh)+ml+fs(rightCh))
+		}
+	}
+
+	if a.sidebarVisible {
+		rows = append(rows, fs(bxTR_+h(sidebarW)+bxTU+h(mainW)+bxTL_))
+	} else {
+		rows = append(rows, fs(bxTR_+h(mainW)+bxTL_))
+	}
+
+	rows = append(rows, fs(bxV)+status+fs(bxV))
+
+	rows = append(rows, fs(bxBL+h(innerW)+bxBR))
+
+	return strings.Join(rows, "\n")
+}
+
+func splitRows(s string) []string {
+	if s == "" {
+		return nil
+	}
+	return strings.Split(s, "\n")
 }

@@ -1,117 +1,157 @@
 package style
 
 import (
+	"strings"
+
 	"charm.land/lipgloss/v2"
 )
 
-// ANSI colors — inherits from terminal colorscheme
-var (
-	ColorPrimary   = lipgloss.ANSIColor(5)  // magenta
-	ColorSecondary = lipgloss.ANSIColor(13) // bright magenta
-	ColorBg        = lipgloss.ANSIColor(0)  // black
-	ColorSurface   = lipgloss.ANSIColor(8)  // bright black
-	ColorText      = lipgloss.ANSIColor(7)  // white
-	ColorSubtext   = lipgloss.ANSIColor(15) // bright white
-	ColorBorder    = lipgloss.ANSIColor(8)  // bright black
-	ColorSuccess   = lipgloss.ANSIColor(2)  // green
-	ColorError     = lipgloss.ANSIColor(1)  // red
-	ColorWarning   = lipgloss.ANSIColor(3)  // yellow
-	ColorAccent    = lipgloss.ANSIColor(4)  // blue
-	ColorCyan      = lipgloss.ANSIColor(6)  // cyan
+func FocusBar(focused bool) string {
+	if focused {
+		return FocusBarActive.Render("▎")
+	}
+	return FocusBarInactive.Render(" ")
+}
 
-	// Main pane borders
+func PrefixFocusBar(content string, focused bool) string {
+	bar := FocusBar(focused)
+	lines := strings.Split(content, "\n")
+	for i, line := range lines {
+		lines[i] = bar + line
+	}
+	return strings.Join(lines, "\n")
+}
+
+var (
+	ColorBg      = lipgloss.ANSIColor(0)
+	ColorSurface = ColorBg
+
+	ColorText    = lipgloss.ANSIColor(7)
+	ColorSubtext = lipgloss.ANSIColor(8)
+	ColorMuted   = lipgloss.ANSIColor(8)
+
+	ColorBorder = lipgloss.ANSIColor(8)
+
+	ColorPrimary   = lipgloss.ANSIColor(3)
+	ColorSecondary = lipgloss.ANSIColor(11)
+	ColorAccent    = lipgloss.ANSIColor(3)
+
+	ColorError   = lipgloss.ANSIColor(1)
+	ColorSuccess = lipgloss.ANSIColor(2)
+	ColorWarning = lipgloss.ANSIColor(3)
+
+	ColorCyan = lipgloss.ANSIColor(4)
+
+	ColorHighlight = lipgloss.Color("236")
+)
+
+var (
 	Sidebar = lipgloss.NewStyle().
-		BorderStyle(lipgloss.RoundedBorder()).
-		BorderForeground(ColorBorder).
-		Padding(0, 1)
+		Foreground(ColorText).
+		Padding(0, 2, 0, 1)
 
 	Editor = lipgloss.NewStyle().
-		BorderStyle(lipgloss.RoundedBorder()).
-		BorderForeground(ColorBorder).
-		Padding(0, 1)
+		Foreground(ColorText).
+		Padding(0, 2, 0, 1)
 
 	Results = lipgloss.NewStyle().
-		BorderStyle(lipgloss.RoundedBorder()).
-		BorderForeground(ColorBorder).
-		Padding(0, 1)
+		Foreground(ColorText).
+		Padding(0, 2, 0, 1)
 
-	Focused = lipgloss.NewStyle().
-		BorderStyle(lipgloss.RoundedBorder()).
-		BorderForeground(ColorPrimary).
-		Padding(0, 1)
+	FrameStyle = lipgloss.NewStyle().Foreground(ColorBorder)
 
-	// Sidebar sub-panels (lazygit style)
-	PanelBorder = lipgloss.NewStyle().
-			BorderStyle(lipgloss.RoundedBorder()).
-			BorderForeground(ColorBorder).
-			Padding(0, 1)
+	ConnLabel = lipgloss.NewStyle().
+			Foreground(ColorSuccess).
+			Bold(true)
 
-	PanelBorderActive = lipgloss.NewStyle().
-				BorderStyle(lipgloss.RoundedBorder()).
-				BorderForeground(ColorPrimary).
-				Padding(0, 1)
+	ConnDot = lipgloss.NewStyle().
+		Foreground(ColorSuccess).
+		Bold(true)
+
+	ConnName = lipgloss.NewStyle().
+			Foreground(ColorText).
+			Bold(true)
+
+	FocusBarActive = lipgloss.NewStyle().
+			Foreground(ColorPrimary).
+			Bold(true)
+
+	FocusBarInactive = lipgloss.NewStyle()
 
 	PanelTitle = lipgloss.NewStyle().
-			Foreground(ColorBorder).
-			Bold(true)
+			Foreground(ColorSubtext)
+
+	PanelTitleFocused = lipgloss.NewStyle().
+				Foreground(ColorText).
+				Bold(true)
 
 	PanelTitleActive = lipgloss.NewStyle().
 				Foreground(ColorPrimary).
 				Bold(true)
 
-	// Status bar
-	StatusBar = lipgloss.NewStyle().
-			Foreground(ColorText)
+	PanelBorder       = PanelTitle
+	PanelBorderActive = PanelTitleActive
 
-	StatusConn = lipgloss.NewStyle().
-			Foreground(ColorCyan).
-			Bold(true)
+	TitleSep = lipgloss.NewStyle().Foreground(ColorMuted)
+
+	StatusBar = lipgloss.NewStyle().Foreground(ColorText)
+
+	StatusModePill = lipgloss.NewStyle().
+			Background(ColorPrimary).
+			Foreground(ColorBg).
+			Bold(true).
+			Padding(0, 1)
+
+	StatusConnPill = lipgloss.NewStyle().
+			Background(ColorCyan).
+			Foreground(ColorBg).
+			Padding(0, 1)
+
+	StatusUpdatePill = lipgloss.NewStyle().
+				Background(ColorWarning).
+				Foreground(ColorBg).
+				Padding(0, 1)
 
 	StatusMsg = lipgloss.NewStyle().
-			Foreground(ColorBorder).
+			Foreground(ColorSubtext).
 			Italic(true)
 
-	StatusHints = lipgloss.NewStyle().
-			Foreground(ColorBorder)
-
-	StatusSep = lipgloss.NewStyle().
-			Foreground(ColorBorder)
-
-	StatusFocus = lipgloss.NewStyle().
-			Foreground(ColorPrimary).
+	StatusStmt = lipgloss.NewStyle().
+			Foreground(ColorSecondary).
 			Bold(true)
 
+	StatusHints = lipgloss.NewStyle().Foreground(ColorSubtext)
+
+	StatusSep = lipgloss.NewStyle().Foreground(ColorBorder)
+
 	StatusKey = lipgloss.NewStyle().
-			Foreground(ColorText)
+			Foreground(ColorText).
+			Bold(true)
 
-	StatusKeyLabel = lipgloss.NewStyle().
-				Foreground(ColorBorder)
+	StatusKeyLabel = lipgloss.NewStyle().Foreground(ColorSubtext)
 
-	StatusUpdate = lipgloss.NewStyle().
-			Foreground(ColorWarning).
-			Italic(true)
+	StatusConn   = StatusModePill
+	StatusFocus  = StatusModePill
+	StatusUpdate = lipgloss.NewStyle().Foreground(ColorWarning).Italic(true)
 
-	// Modals
-	Title = lipgloss.NewStyle().
 		Foreground(ColorPrimary).
 		Bold(true)
 
 	ModalOverlay = lipgloss.NewStyle().
-			BorderStyle(lipgloss.DoubleBorder()).
-			BorderForeground(ColorPrimary).
+			Background(ColorBg).
+			BorderStyle(lipgloss.NormalBorder()).
+			BorderForeground(ColorBorder).
+			BorderBackground(ColorBg).
 			Padding(1, 2)
 
 	Label = lipgloss.NewStyle().
 		Foreground(ColorSecondary).
 		Bold(true)
 
-	Error = lipgloss.NewStyle().
-		Foreground(ColorError)
+	Error = lipgloss.NewStyle().Foreground(ColorError)
 
-	Success = lipgloss.NewStyle().
-		Foreground(ColorSuccess)
+	Success = lipgloss.NewStyle().Foreground(ColorSuccess)
 
-	// List items
 	ListItem = lipgloss.NewStyle().
 			Foreground(ColorText).
 			PaddingLeft(2)
@@ -121,37 +161,30 @@ var (
 			Bold(true).
 			PaddingLeft(1)
 
-	// Results table
 	TableHeader = lipgloss.NewStyle().
-			Bold(true).
-			Foreground(ColorCyan).
-			Padding(0, 1).
-			BorderStyle(lipgloss.NormalBorder()).
-			BorderBottom(true).
-			BorderForeground(ColorBorder)
+			Foreground(ColorSubtext).
+			Padding(0, 1)
 
 	TableCell = lipgloss.NewStyle().
 			Foreground(ColorText).
 			Padding(0, 1)
 
 	TableSelected = lipgloss.NewStyle().
-			Bold(true).
 			Foreground(ColorPrimary).
-			Background(ColorSurface).
+			Bold(true).
 			Padding(0, 1)
 
 	TableNull = lipgloss.NewStyle().
-			Foreground(ColorBorder).
+			Foreground(ColorMuted).
 			Italic(true).
 			Padding(0, 1)
 
-	// Sidebar table browser
 	TableName = lipgloss.NewStyle().
 			Foreground(ColorCyan).
 			PaddingLeft(2)
 
 	TableNameSelected = lipgloss.NewStyle().
-				Foreground(ColorCyan).
+				Foreground(ColorPrimary).
 				Bold(true).
 				PaddingLeft(1)
 
@@ -165,6 +198,6 @@ var (
 				PaddingLeft(3)
 
 	ColumnType = lipgloss.NewStyle().
-			Foreground(ColorBorder).
+			Foreground(ColorSubtext).
 			Italic(true)
 )
