@@ -134,8 +134,8 @@ var (
 	StatusFocus  = StatusModePill
 	StatusUpdate = lipgloss.NewStyle().Foreground(ColorWarning).Italic(true)
 
-		Foreground(ColorPrimary).
-		Bold(true)
+	Title = lipgloss.NewStyle().
+		Foreground(ColorPrimary).Bold(true)
 
 	ModalOverlay = lipgloss.NewStyle().
 			Background(ColorBg).

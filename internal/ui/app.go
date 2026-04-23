@@ -929,6 +929,8 @@ func (a App) composeFrame(sidebar, preview, results, status string) string {
 		switch {
 		case atEditorBottom:
 			ml = fs(h(mainW))
+		case y < editorBottomRow:
+			if y < len(previewRows) {
 				ml = previewRows[y]
 			} else {
 				ml = sp(mainW)
