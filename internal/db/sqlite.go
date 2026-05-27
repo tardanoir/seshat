@@ -29,6 +29,8 @@ func newSQLite(path string, maxRows int) (*sqliteDriver, error) {
 
 func (s *sqliteDriver) SetMaxRows(n int) { s.maxRows = n }
 
+func (s *sqliteDriver) Dialect() string { return "sqlite" }
+
 func (s *sqliteDriver) Close(_ context.Context) error {
 	return s.db.Close()
 }

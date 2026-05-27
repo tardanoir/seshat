@@ -190,6 +190,19 @@ func (m Model) Value() string {
 
 func (m Model) StmtCount() int { return len(m.stmts) }
 
+// CursorLine returns the 0-indexed row of the cursor in the editor buffer.
+// In vim mode it returns the start line of the current statement; the AI
+// feature uses this to locate the comment block at the cursor.
+func (m Model) CursorLine() int {
+	if m.vimMode {
+		if len(m.stmts) > 0 && m.cursor < len(m.stmts) {
+			return m.stmts[m.cursor].startLine
+		}
+		return 0
+	}
+	return m.ta.Line()
+}
+
 func (m Model) StmtIndex() int {
 	if len(m.stmts) == 0 {
 		return 0

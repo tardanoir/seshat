@@ -67,6 +67,7 @@ func main() {
 		Quit:          cfg.Keys.Quit,
 		Delete:        cfg.Keys.Delete,
 		Suspend:       cfg.Keys.Suspend,
+		AIGenerate:    cfg.Keys.AIGenerate,
 	})
 
 	app := ui.NewApp(cfg, version)

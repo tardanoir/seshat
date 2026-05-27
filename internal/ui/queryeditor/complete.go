@@ -12,9 +12,10 @@ type TableRef struct {
 }
 
 type ColumnRef struct {
-	Schema string
-	Table  string
-	Name   string
+	Schema   string
+	Table    string
+	Name     string
+	DataType string
 }
 
 type provider struct {

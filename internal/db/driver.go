@@ -31,6 +31,7 @@ type Driver interface {
 	Execute(ctx context.Context, sql string) (*QueryResult, error)
 	ListTables(ctx context.Context) ([]TableInfo, error)
 	ListColumns(ctx context.Context, schema, tableName string) ([]ColumnInfo, error)
+	Dialect() string
 	Close(ctx context.Context) error
 }
 
@@ -77,4 +78,8 @@ func (d *DB) ListColumns(ctx context.Context, schema, tableName string) ([]Colum
 
 func (d *DB) Close(ctx context.Context) error {
 	return d.Driver.Close(ctx)
+}
+
+func (d *DB) Dialect() string {
+	return d.Driver.Dialect()
 }
