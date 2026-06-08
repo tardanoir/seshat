@@ -17,6 +17,7 @@ type Keybindings struct {
 	Save          string `toml:"save"`
 	Template      string `toml:"template"`
 	ConnPick      string `toml:"connection"`
+	History       string `toml:"history"`
 	ToggleSidebar string `toml:"toggle_sidebar"`
 	Export        string `toml:"export"`
 	Tab           string `toml:"tab"`
@@ -24,6 +25,7 @@ type Keybindings struct {
 	Quit          string `toml:"quit"`
 	Delete        string `toml:"delete"`
 	Suspend       string `toml:"suspend"`
+	AIGenerate    string `toml:"ai_generate"`
 }
 
 type Config struct {
@@ -33,6 +35,21 @@ type Config struct {
 	MaxRows           int                   `toml:"max_rows"`
 	Connections       map[string]Connection `toml:"connections"`
 	Keys              Keybindings           `toml:"keybindings"`
+	AI                AIConfig              `toml:"ai"`
+}
+
+type AIConfig struct {
+	DefaultProvider string                    `toml:"default_provider"`
+	Providers       map[string]AIProviderConf `toml:"providers"`
+}
+
+type AIProviderConf struct {
+	Kind     string   `toml:"kind"`
+	APIKey   string   `toml:"api_key"`
+	Model    string   `toml:"model"`
+	BaseURL  string   `toml:"base_url"`
+	Argv     []string `toml:"argv"`
+	TimeoutS int      `toml:"timeout_seconds"`
 }
 
 // TODO: right now I have a way to test the GCP and AWS approaches, still need to test other clouds.
@@ -232,10 +249,46 @@ password = ""
 # save = "ctrl+w"
 # template = "ctrl+t"
 # connection = "ctrl+n"
+# history = "ctrl+h"
 # toggle_sidebar = "ctrl+\\"
 # tab = "tab"
 # shift_tab = "shift+tab"
 # quit = "ctrl+c"
 # delete = "ctrl+d"
 # suspend = "ctrl+z"
+# ai_generate = "ctrl+a"
+
+# AI SQL generation. Place the cursor on a "-- ..." comment in the editor and
+# press the AI hotkey to ask the configured provider to generate SQL. The
+# response opens in a modal you can accept or reject.
+#
+# api_key supports "$ENV_VAR" to read from the environment.
+# argv supports "{prompt}" as a placeholder; without it, the prompt is sent
+# on stdin instead.
+#
+# [ai]
+# default_provider = "anthropic"
+#
+# [ai.providers.anthropic]
+# kind = "anthropic"
+# api_key = "$ANTHROPIC_API_KEY"
+# model = "claude-sonnet-4-5"
+#
+# [ai.providers.openai]
+# kind = "openai"
+# api_key = "$OPENAI_API_KEY"
+# model = "gpt-4.1-mini"
+#
+# [ai.providers.gemini]
+# kind = "gemini"
+# api_key = "$GEMINI_API_KEY"
+# model = "gemini-2.5-flash"
+#
+# [ai.providers.claude_cli]
+# kind = "cli"
+# argv = ["claude", "-p", "{prompt}"]
+#
+# [ai.providers.opencode_cli]
+# kind = "cli"
+# argv = ["opencode", "run", "{prompt}"]
 `

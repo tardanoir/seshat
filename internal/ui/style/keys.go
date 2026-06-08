@@ -10,6 +10,7 @@ type KeyMap struct {
 	Save          key.Binding
 	Template      key.Binding
 	ConnPick      key.Binding
+	History       key.Binding
 	ToggleSidebar key.Binding
 	Export        key.Binding
 	Tab           key.Binding
@@ -21,6 +22,7 @@ type KeyMap struct {
 	Enter         key.Binding
 	Up            key.Binding
 	Down          key.Binding
+	AIGenerate    key.Binding
 }
 
 var Keys = KeyMap{
@@ -43,6 +45,10 @@ var Keys = KeyMap{
 	ConnPick: key.NewBinding(
 		key.WithKeys("ctrl+n"),
 		key.WithHelp("C-n", "conn"),
+	),
+	History: key.NewBinding(
+		key.WithKeys("ctrl+h"),
+		key.WithHelp("C-h", "history"),
 	),
 	ToggleSidebar: key.NewBinding(
 		key.WithKeys("ctrl+\\"),
@@ -88,6 +94,10 @@ var Keys = KeyMap{
 		key.WithKeys("down"),
 		key.WithHelp("Down", "down"),
 	),
+	AIGenerate: key.NewBinding(
+		key.WithKeys("ctrl+a"),
+		key.WithHelp("C-a", "ai"),
+	),
 }
 
 // Keybindings mirrors config.Keybindings to avoid import cycle.
@@ -97,6 +107,7 @@ type Keybindings struct {
 	Save          string
 	Template      string
 	ConnPick      string
+	History       string
 	ToggleSidebar string
 	Export        string
 	Tab           string
@@ -104,6 +115,7 @@ type Keybindings struct {
 	Quit          string
 	Delete        string
 	Suspend       string
+	AIGenerate    string
 }
 
 func ApplyKeybindings(kb Keybindings) {
@@ -117,6 +129,7 @@ func ApplyKeybindings(kb Keybindings) {
 	apply(&Keys.Save, kb.Save)
 	apply(&Keys.Template, kb.Template)
 	apply(&Keys.ConnPick, kb.ConnPick)
+	apply(&Keys.History, kb.History)
 	apply(&Keys.ToggleSidebar, kb.ToggleSidebar)
 	apply(&Keys.Export, kb.Export)
 	apply(&Keys.Tab, kb.Tab)
@@ -124,4 +137,5 @@ func ApplyKeybindings(kb Keybindings) {
 	apply(&Keys.Quit, kb.Quit)
 	apply(&Keys.Delete, kb.Delete)
 	apply(&Keys.Suspend, kb.Suspend)
+	apply(&Keys.AIGenerate, kb.AIGenerate)
 }

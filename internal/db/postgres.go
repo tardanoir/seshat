@@ -39,6 +39,8 @@ func formatPgValue(v any) string {
 
 func (p *postgresDriver) SetMaxRows(n int) { p.maxRows = n }
 
+func (p *postgresDriver) Dialect() string { return "postgres" }
+
 func (p *postgresDriver) Close(ctx context.Context) error {
 	if p.conn != nil {
 		return p.conn.Close(ctx)

@@ -53,6 +53,7 @@ func (m HelpModel) View() string {
 		row("Ctrl+W", "Save query"),
 		row("Ctrl+T", "Load template"),
 		row("Ctrl+N", "Switch connection"),
+		row("Ctrl+H", "Query history"),
 		row("Ctrl+X", "Export results"),
 		row("Ctrl+\\", "Toggle sidebar"),
 		row("Tab", "Switch focus"),
@@ -71,6 +72,7 @@ func (m HelpModel) View() string {
 		"",
 		style.Label.Render("Sidebar"),
 		row("1-4", "Switch section"),
+		row("/", "Search entries"),
 		row("Enter", "Select item"),
 		row("Ctrl+D", "Delete query"),
 	}

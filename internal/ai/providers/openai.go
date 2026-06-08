@@ -1,0 +1,67 @@
+package providers
+
+import (
+	"context"
+	"errors"
+	"net/http"
+	"time"
+
+	"github.com/tardanoir/seshat/internal/ai"
+)
+
+const openAIDefaultModel = "gpt-4.1-mini"
+const openAIDefaultURL = "https://api.openai.com/v1/chat/completions"
+
+type OpenAI struct {
+	APIKey  string
+	Model   string
+	BaseURL string
+	client  *http.Client
+}
+
+func NewOpenAI(apiKey, model, baseURL string, timeout time.Duration) *OpenAI {
+	return &OpenAI{
+		APIKey:  apiKey,
+		Model:   pickStr(model, openAIDefaultModel),
+		BaseURL: pickStr(baseURL, openAIDefaultURL),
+		client:  newClient(timeout),
+	}
+}
+
+func (o *OpenAI) Name() string { return "openai" }
+
+func (o *OpenAI) Generate(ctx context.Context, req ai.Request) (ai.Response, error) {
+	if o.APIKey == "" {
+		return ai.Response{}, errors.New("openai: api_key not set")
+	}
+	body := map[string]any{
+		"model":       o.Model,
+		"temperature": 0,
+		"messages": []map[string]any{
+			{"role": "system", "content": ai.SystemPrompt},
+			{"role": "user", "content": ai.BuildPrompt(req)},
+		},
+	}
+	headers := map[string]string{
+		"Authorization": "Bearer " + o.APIKey,
+	}
+	var resp struct {
+		Choices []struct {
+			Message struct {
+				Content string `json:"content"`
+			} `json:"message"`
+		} `json:"choices"`
+	}
+	if err := postJSON(ctx, o.client, o.BaseURL, headers, body, &resp); err != nil {
+		return ai.Response{}, err
+	}
+	raw := ""
+	if len(resp.Choices) > 0 {
+		raw = resp.Choices[0].Message.Content
+	}
+	return ai.Response{
+		SQL:      ai.ExtractSQL(raw),
+		Raw:      raw,
+		Provider: o.Name(),
+	}, nil
+}

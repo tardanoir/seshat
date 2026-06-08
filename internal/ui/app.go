@@ -2,11 +2,14 @@ package ui
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"strings"
 	"time"
 
+	"github.com/tardanoir/seshat/internal/ai"
+	"github.com/tardanoir/seshat/internal/ai/providers"
 	"github.com/tardanoir/seshat/internal/config"
 	"github.com/tardanoir/seshat/internal/db"
 	"github.com/tardanoir/seshat/internal/editor"
@@ -44,6 +47,8 @@ const (
 	ModalConfirm
 	ModalExport
 	ModalHelp
+	ModalAIReview
+	ModalHistory
 )
 
 // Messages
@@ -93,11 +98,16 @@ type App struct {
 	saveModal      modal.SaveModel
 	templatePicker modal.TemplatePickerModel
 	templateVars   modal.TemplateVarsModel
+	historyPicker  modal.HistoryPickerModel
 	confirmModal   modal.ConfirmModel
 	exportModal    modal.ExportModel
 	helpModal      modal.HelpModel
+	aiReview       modal.AIReviewModel
 	deleteTarget   string
 	lastSQL        string
+
+	aiProvider ai.Provider
+	aiCancel   context.CancelFunc
 
 	focus          Focus
 	sidebarVisible bool
@@ -120,6 +130,15 @@ func NewApp(cfg *config.Config, ver string) App {
 	r := resultstable.New()
 	st := statusbar.New()
 
+	var aiProvider ai.Provider
+	if cfg.AI.DefaultProvider != "" {
+		if prov, err := providers.Build(aiConfigFrom(cfg.AI)); err == nil {
+			aiProvider = prov
+		} else {
+			st.SetError("AI: " + err.Error())
+		}
+	}
+
 	return App{
 		cfg:            cfg,
 		sidebar:        s,
@@ -130,6 +149,7 @@ func NewApp(cfg *config.Config, ver string) App {
 		sidebarVisible: true,
 		connName:       cfg.DefaultConnection,
 		version:        ver,
+		aiProvider:     aiProvider,
 	}
 }
 
@@ -147,6 +167,7 @@ func (a App) Init() tea.Cmd {
 		a.loadTemplatesCmd(),
 		a.loadHistoryCmd(),
 		a.checkUpdateCmd(),
+		a.preview.NvimSubscribe(),
 	)
 }
 
@@ -319,6 +340,36 @@ func (a *App) loadColumnsCmd(schema, tableName string) tea.Cmd {
 	}
 }
 
+// startAIGenerationCmd extracts the comment block under the cursor, builds an
+// ai.Request from the cached schema, and dispatches the provider call. It
+// validates preconditions and surfaces errors via the status bar instead of
+// returning a tea.Cmd.
+func (a *App) startAIGenerationCmd() tea.Cmd {
+	if a.aiProvider == nil {
+		a.status.SetError("AI: configure [ai] in config.toml to enable")
+		return nil
+	}
+	block, ok := ai.ExtractCommentBlock(a.preview.Value(), a.preview.CursorLine())
+	if !ok {
+		a.status.SetError("Place cursor on a -- comment to generate SQL")
+		return nil
+	}
+	dialect := ""
+	if a.db != nil {
+		dialect = a.db.Dialect()
+	}
+	req := buildAIRequest(a.connName, dialect, block.Text, a.schemaTables, a.schemaColumnsBy)
+
+	if a.aiCancel != nil {
+		a.aiCancel()
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	a.aiCancel = cancel
+
+	a.status.SetMessage("Generating SQL via " + a.aiProvider.Name() + "...")
+	return generateAICmd(ctx, a.aiProvider, req, block)
+}
+
 func (a *App) executeSelectedCmd() tea.Cmd {
 	sql := a.preview.SelectedStatement()
 	d := a.db
@@ -414,9 +465,11 @@ func (a *App) layout() {
 	a.saveModal.SetSize(a.width, a.height)
 	a.templatePicker.SetSize(a.width, a.height)
 	a.templateVars.SetSize(a.width, a.height)
+	a.historyPicker.SetSize(a.width, a.height)
 	a.confirmModal.SetSize(a.width, a.height)
 	a.exportModal.SetSize(a.width, a.height)
 	a.helpModal.SetSize(a.width, a.height)
+	a.aiReview.SetSize(a.width, a.height)
 }
 
 func (a *App) toggleMainFocus() {
@@ -453,12 +506,25 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.ready = true
 		return a, nil
 
+	case queryeditor.NvimRedrawMsg:
+		// Embedded nvim flushed a frame: refresh the editor's cached state and
+		// keep listening. Handled regardless of focus so async updates repaint.
+		var cmd tea.Cmd
+		a.preview, cmd = a.preview.Update(msg)
+		return a, tea.Batch(cmd, a.preview.NvimSubscribe())
+
+	case queryeditor.NvimExitedMsg:
+		a.preview.DisableNvim()
+		a.status.SetError("nvim exited — vim mode degraded to navigator")
+		return a, nil
+
 	case tea.KeyMsg:
 		if key.Matches(msg, style.Keys.Quit) {
 			if a.db != nil {
 				a.db.Close(context.Background())
 			}
 			a.closeTunnel()
+			a.preview.Close()
 			return a, tea.Quit
 		}
 
@@ -469,6 +535,10 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if key.Matches(msg, style.Keys.Escape) {
 			if a.modalState == ModalAddConn {
 				// Let the addconn modal handle its own Esc (step back).
+				return a.updateModal(msg)
+			}
+			if a.modalSearching() {
+				// Let a searchable picker exit its search instead of closing.
 				return a.updateModal(msg)
 			}
 			if a.modalState != ModalNone {
@@ -485,6 +555,13 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch {
 		case key.Matches(msg, style.Keys.Tab):
 			if a.focus == FocusPreview && a.preview.CompletionOpen() {
+				var cmd tea.Cmd
+				a.preview, cmd = a.preview.Update(msg)
+				return a, cmd
+			}
+			// While editing in embedded nvim, Tab indents; only switch panes
+			// from normal/visual mode (or the non-embedded editor).
+			if a.focus == FocusPreview && a.preview.NvimInsertMode() {
 				var cmd tea.Cmd
 				a.preview, cmd = a.preview.Update(msg)
 				return a, cmd
@@ -516,6 +593,12 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			a.connModal = modal.NewConnection(a.cfg.Connections, a.connName)
 			a.connModal.SetSize(a.width, a.height)
 			return a, nil
+		case key.Matches(msg, style.Keys.History):
+			h, _ := query.LoadHistory()
+			a.modalState = ModalHistory
+			a.historyPicker = modal.NewHistoryPicker(h)
+			a.historyPicker.SetSize(a.width, a.height)
+			return a, nil
 		case key.Matches(msg, style.Keys.Export):
 			if a.results.CurrentResult() == nil {
 				a.status.SetError("No results to export")
@@ -528,6 +611,11 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case key.Matches(msg, style.Keys.ToggleSidebar):
 			a.toggleSidebarFocus()
 			return a, nil
+		case key.Matches(msg, style.Keys.AIGenerate):
+			if a.focus != FocusPreview {
+				return a, nil
+			}
+			return a, a.startAIGenerationCmd()
 		}
 
 		// ? help — only when not typing in the query editor
@@ -686,6 +774,35 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.status.SetMessage("Template applied")
 		return a, nil
 
+	case AIResultMsg:
+		a.aiCancel = nil
+		a.status.SetMessage("AI suggestion ready (" + msg.Provider + ")")
+		a.aiReview = modal.NewAIReview(msg.SQL, msg.Provider, msg.Block)
+		a.aiReview.SetSize(a.width, a.height)
+		a.modalState = ModalAIReview
+		return a, nil
+
+	case AIErrorMsg:
+		a.aiCancel = nil
+		if errors.Is(msg.Err, context.Canceled) {
+			return a, nil
+		}
+		a.status.SetError("AI: " + msg.Err.Error())
+		return a, nil
+
+	case modal.AIAcceptMsg:
+		a.modalState = ModalNone
+		a.applyAIResult(msg.SQL, msg.Block)
+		a.setFocus(FocusPreview)
+		a.status.SetMessage("AI suggestion applied")
+		return a, nil
+
+	case modal.AIRejectMsg:
+		a.modalState = ModalNone
+		a.setFocus(FocusPreview)
+		a.status.SetMessage("AI suggestion discarded")
+		return a, nil
+
 	case modal.ConfirmMsg:
 		a.modalState = ModalNone
 		if msg.Confirmed && msg.Tag == "delete-query" {
@@ -728,7 +845,9 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			a.sidebar.CacheTableColumns(schema, table, cols)
 			refs := make([]queryeditor.ColumnRef, 0, len(cols))
 			for _, c := range cols {
-				refs = append(refs, queryeditor.ColumnRef{Schema: schema, Table: table, Name: c.Name})
+				refs = append(refs, queryeditor.ColumnRef{
+					Schema: schema, Table: table, Name: c.Name, DataType: c.DataType,
+				})
 			}
 			a.schemaColumnsBy[key] = refs
 		}
@@ -744,7 +863,7 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		refs := make([]queryeditor.ColumnRef, 0, len(msg.Columns))
 		for _, c := range msg.Columns {
 			refs = append(refs, queryeditor.ColumnRef{
-				Schema: msg.Schema, Table: msg.TableName, Name: c.Name,
+				Schema: msg.Schema, Table: msg.TableName, Name: c.Name, DataType: c.DataType,
 			})
 		}
 		a.schemaColumnsBy[key] = refs
@@ -765,6 +884,13 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, nil
 
 	case sidebar.SelectHistoryMsg:
+		a.preview.SetValue(msg.SQL)
+		a.setFocus(FocusPreview)
+		a.status.SetMessage("Query loaded from history")
+		return a, nil
+
+	case modal.HistorySelectedMsg:
+		a.modalState = ModalNone
 		a.preview.SetValue(msg.SQL)
 		a.setFocus(FocusPreview)
 		a.status.SetMessage("Query loaded from history")
@@ -863,6 +989,20 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return a, tea.Batch(cmds...)
 }
 
+// modalSearching reports whether the active modal is a picker currently in
+// incremental-search mode, so Esc can exit search rather than close the modal.
+func (a App) modalSearching() bool {
+	switch a.modalState {
+	case ModalConnection:
+		return a.connModal.Searching()
+	case ModalTemplatePicker:
+		return a.templatePicker.Searching()
+	case ModalHistory:
+		return a.historyPicker.Searching()
+	}
+	return false
+}
+
 func (a App) updateModal(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
 	switch a.modalState {
@@ -884,8 +1024,29 @@ func (a App) updateModal(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.exportModal, cmd = a.exportModal.Update(msg)
 	case ModalHelp:
 		a.helpModal, cmd = a.helpModal.Update(msg)
+	case ModalAIReview:
+		a.aiReview, cmd = a.aiReview.Update(msg)
+	case ModalHistory:
+		a.historyPicker, cmd = a.historyPicker.Update(msg)
 	}
 	return a, cmd
+}
+
+// applyAIResult replaces the comment block in the editor buffer with the
+// generated SQL.
+func (a *App) applyAIResult(sql string, block ai.CommentBlock) {
+	lines := strings.Split(a.preview.Value(), "\n")
+	if block.StartLine < 0 || block.EndLine >= len(lines) || block.StartLine > block.EndLine {
+		// Block coordinates are stale (e.g., user edited the buffer mid-flight);
+		// fall back to inserting the SQL at the start of the buffer.
+		a.preview.SetValue(sql + "\n" + a.preview.Value())
+		return
+	}
+	out := make([]string, 0, len(lines))
+	out = append(out, lines[:block.StartLine]...)
+	out = append(out, strings.Split(sql, "\n")...)
+	out = append(out, lines[block.EndLine+1:]...)
+	a.preview.SetValue(strings.Join(out, "\n"))
 }
 
 func (a App) View() tea.View {
@@ -941,6 +1102,10 @@ func (a App) View() tea.View {
 		return view(a.exportModal.View())
 	case ModalHelp:
 		return view(a.helpModal.View())
+	case ModalAIReview:
+		return view(a.aiReview.View())
+	case ModalHistory:
+		return view(a.historyPicker.View())
 	}
 
 	return view(full)

@@ -247,6 +247,8 @@ func (f *fileDriver) ListColumns(ctx context.Context, schema, tableName string) 
 	return f.sqlite.ListColumns(ctx, schema, tableName)
 }
 
+func (f *fileDriver) Dialect() string { return "sqlite" }
+
 func (f *fileDriver) Close(ctx context.Context) error {
 	return f.sqlite.Close(ctx)
 }

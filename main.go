@@ -60,6 +60,7 @@ func main() {
 		Save:          cfg.Keys.Save,
 		Template:      cfg.Keys.Template,
 		ConnPick:      cfg.Keys.ConnPick,
+		History:       cfg.Keys.History,
 		ToggleSidebar: cfg.Keys.ToggleSidebar,
 		Export:        cfg.Keys.Export,
 		Tab:           cfg.Keys.Tab,
@@ -67,6 +68,7 @@ func main() {
 		Quit:          cfg.Keys.Quit,
 		Delete:        cfg.Keys.Delete,
 		Suspend:       cfg.Keys.Suspend,
+		AIGenerate:    cfg.Keys.AIGenerate,
 	})
 
 	app := ui.NewApp(cfg, version)

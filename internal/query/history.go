@@ -9,6 +9,8 @@ import (
 	"github.com/tardanoir/seshat/internal/config"
 )
 
+// add search in the history
+
 const maxHistoryEntries = 100
 
 type HistoryEntry struct {
