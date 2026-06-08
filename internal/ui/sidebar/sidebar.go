@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/tardanoir/seshat/internal/query"
+	"github.com/tardanoir/seshat/internal/ui/filter"
 	"github.com/tardanoir/seshat/internal/ui/style"
 
 	tea "charm.land/bubbletea/v2"
@@ -62,6 +63,7 @@ type Model struct {
 	activeSection Section
 	cursor        int
 	scrollY       int
+	search        filter.Model
 }
 
 func New() Model {
@@ -106,28 +108,102 @@ func (m *Model) CacheTableColumns(schema, tableName string, cols []ColumnDef) {
 func (m Model) sectionItemCount(sec Section) int {
 	switch sec {
 	case SectionQueries:
-		return len(m.queries)
+		return len(m.visibleQueries())
 	case SectionTemplates:
-		return len(m.templates)
+		return len(m.visibleTemplates())
 	case SectionTables:
 		n := 0
-		for _, t := range m.tables {
+		for _, ti := range m.visibleTableIdx() {
 			n++
-			if t.Expanded {
-				n += len(t.Columns)
+			if m.tables[ti].Expanded {
+				n += len(m.tables[ti].Columns)
 			}
 		}
 		return n
 	case SectionHistory:
-		return len(m.history)
+		return len(m.visibleHistory())
 	}
 	return 0
+}
+
+// visibleQueries / visibleTemplates / visibleHistory return the entries of the
+// active section matching the current search (all of them when not searching).
+// The search only ever applies to the active section (it is cleared on switch).
+
+func (m Model) visibleQueries() []query.SavedQuery {
+	if !m.search.Active() {
+		return m.queries
+	}
+	out := make([]query.SavedQuery, 0, len(m.queries))
+	for _, q := range m.queries {
+		if m.search.Matches(q.Name) {
+			out = append(out, q)
+		}
+	}
+	return out
+}
+
+func (m Model) visibleTemplates() []query.Template {
+	if !m.search.Active() {
+		return m.templates
+	}
+	out := make([]query.Template, 0, len(m.templates))
+	for _, t := range m.templates {
+		if m.search.Matches(t.Name) {
+			out = append(out, t)
+		}
+	}
+	return out
+}
+
+func (m Model) visibleHistory() []query.HistoryEntry {
+	if !m.search.Active() {
+		return m.history
+	}
+	out := make([]query.HistoryEntry, 0, len(m.history))
+	for _, h := range m.history {
+		if m.search.Matches(h.SQL) {
+			out = append(out, h)
+		}
+	}
+	return out
+}
+
+// visibleTableIdx returns indices into m.tables for the tables matching the
+// search, preserving order. Indices (not copies) so callers can mutate the
+// underlying entries (e.g. toggling expansion).
+func (m Model) visibleTableIdx() []int {
+	out := make([]int, 0, len(m.tables))
+	for i, t := range m.tables {
+		if !m.search.Active() || m.search.Matches(t.DisplayName()) {
+			out = append(out, i)
+		}
+	}
+	return out
+}
+
+func (m Model) emptyLabel() string {
+	if m.search.Active() && m.search.Query() != "" {
+		return "(no matches)"
+	}
+	return "(none)"
 }
 
 func (m *Model) switchSection(sec Section) {
 	m.activeSection = sec
 	m.cursor = 0
 	m.scrollY = 0
+	m.search.Clear()
+}
+
+func (m *Model) moveDown() {
+	mx := m.sectionItemCount(m.activeSection) - 1
+	if mx < 0 {
+		mx = 0
+	}
+	if m.cursor < mx {
+		m.cursor++
+	}
 }
 
 func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
@@ -137,7 +213,38 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		k := msg.String()
+		if m.search.Active() {
+			// Search mode: arrows navigate the filtered list, enter/ctrl+d act on
+			// it, esc exits search; every other printable key edits the query
+			// (so digits and j/k are typed, not treated as commands).
+			switch k {
+			case "esc":
+				m.search.Clear()
+				m.cursor = 0
+				m.scrollY = 0
+			case "up":
+				if m.cursor > 0 {
+					m.cursor--
+				}
+			case "down":
+				m.moveDown()
+			case "enter":
+				return m.handleEnter()
+			case "ctrl+d":
+				return m.handleDelete()
+			default:
+				if m.search.HandleKey(msg) {
+					m.cursor = 0
+					m.scrollY = 0
+				}
+			}
+			return m, nil
+		}
 		switch k {
+		case "/":
+			m.search.Activate()
+			m.cursor = 0
+			m.scrollY = 0
 		case "1":
 			m.switchSection(SectionQueries)
 		case "2":
@@ -151,13 +258,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 				m.cursor--
 			}
 		case "down", "j":
-			mx := m.sectionItemCount(m.activeSection) - 1
-			if mx < 0 {
-				mx = 0
-			}
-			if m.cursor < mx {
-				m.cursor++
-			}
+			m.moveDown()
 		case "enter":
 			return m.handleEnter()
 		case "ctrl+d":
@@ -170,26 +271,28 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 func (m Model) handleEnter() (Model, tea.Cmd) {
 	switch m.activeSection {
 	case SectionQueries:
-		if m.cursor < len(m.queries) {
-			content := m.queries[m.cursor].Content
+		vq := m.visibleQueries()
+		if m.cursor < len(vq) {
+			content := vq[m.cursor].Content
 			return m, func() tea.Msg { return SelectQueryMsg{Content: content} }
 		}
 	case SectionTemplates:
-		if m.cursor < len(m.templates) {
-			t := m.templates[m.cursor]
+		vt := m.visibleTemplates()
+		if m.cursor < len(vt) {
+			t := vt[m.cursor]
 			return m, func() tea.Msg { return SelectTemplateMsg{Template: t} }
 		}
 	case SectionTables:
 		idx := 0
-		for i := range m.tables {
+		for _, ti := range m.visibleTableIdx() {
 			if idx == m.cursor {
-				if m.tables[i].Expanded {
-					m.tables[i].Expanded = false
-				} else if len(m.tables[i].Columns) > 0 {
-					m.tables[i].Expanded = true
+				if m.tables[ti].Expanded {
+					m.tables[ti].Expanded = false
+				} else if len(m.tables[ti].Columns) > 0 {
+					m.tables[ti].Expanded = true
 				} else {
-					schema := m.tables[i].Schema
-					name := m.tables[i].Name
+					schema := m.tables[ti].Schema
+					name := m.tables[ti].Name
 					return m, func() tea.Msg {
 						return RequestColumnsMsg{Schema: schema, TableName: name}
 					}
@@ -197,8 +300,8 @@ func (m Model) handleEnter() (Model, tea.Cmd) {
 				return m, nil
 			}
 			idx++
-			if m.tables[i].Expanded {
-				for range m.tables[i].Columns {
+			if m.tables[ti].Expanded {
+				for range m.tables[ti].Columns {
 					if idx == m.cursor {
 						return m, nil
 					}
@@ -207,8 +310,9 @@ func (m Model) handleEnter() (Model, tea.Cmd) {
 			}
 		}
 	case SectionHistory:
-		if m.cursor < len(m.history) {
-			sql := m.history[m.cursor].SQL
+		vh := m.visibleHistory()
+		if m.cursor < len(vh) {
+			sql := vh[m.cursor].SQL
 			return m, func() tea.Msg { return SelectHistoryMsg{SQL: sql} }
 		}
 	}
@@ -216,9 +320,12 @@ func (m Model) handleEnter() (Model, tea.Cmd) {
 }
 
 func (m Model) handleDelete() (Model, tea.Cmd) {
-	if m.activeSection == SectionQueries && m.cursor < len(m.queries) {
-		name := m.queries[m.cursor].Name
-		return m, func() tea.Msg { return DeleteQueryMsg{Name: name} }
+	if m.activeSection == SectionQueries {
+		vq := m.visibleQueries()
+		if m.cursor < len(vq) {
+			name := vq[m.cursor].Name
+			return m, func() tea.Msg { return DeleteQueryMsg{Name: name} }
+		}
 	}
 	return m, nil
 }
@@ -257,7 +364,7 @@ func (m Model) View() string {
 	} else {
 		allLines = append(allLines, "")
 	}
-	
+
 	fixedLines := len(allLines) + int(sectionCount)
 	bodyH := innerH - fixedLines
 	if bodyH < 1 {
@@ -271,7 +378,13 @@ func (m Model) View() string {
 			if !m.focused {
 				titleStyle = style.PanelTitle.Bold(true)
 			}
-			allLines = append(allLines, titleStyle.Render(title))
+			if m.search.Active() {
+				// Show the live query in place of the count, truncated to fit.
+				raw := trunc(m.sectionName(sec)+" /"+m.search.Query(), innerW-1) + "▏"
+				allLines = append(allLines, titleStyle.Render(raw))
+			} else {
+				allLines = append(allLines, titleStyle.Render(title))
+			}
 
 			bodyLines := m.buildSectionLines(sec, innerW)
 
@@ -338,20 +451,34 @@ func (m Model) sectionTitle(sec Section) string {
 	return ""
 }
 
+func (m Model) sectionName(sec Section) string {
+	switch sec {
+	case SectionQueries:
+		return "QUERIES"
+	case SectionTemplates:
+		return "TEMPLATES"
+	case SectionTables:
+		return "TABLES"
+	case SectionHistory:
+		return "HISTORY"
+	}
+	return ""
+}
+
 func (m Model) cursorToVisualLine(sec Section) int {
 	if sec != SectionTables {
 		return m.cursor
 	}
 	visualLine := 0
 	idx := 0
-	for _, t := range m.tables {
+	for _, ti := range m.visibleTableIdx() {
 		if idx == m.cursor {
 			return visualLine
 		}
 		visualLine++
 		idx++
-		if t.Expanded {
-			for range t.Columns {
+		if m.tables[ti].Expanded {
+			for range m.tables[ti].Columns {
 				if idx == m.cursor {
 					return visualLine
 				}
@@ -378,11 +505,12 @@ func (m Model) buildSectionLines(sec Section, maxW int) []string {
 }
 
 func (m Model) buildQueryLines(maxW int) []string {
-	if len(m.queries) == 0 {
-		return []string{style.StatusMsg.Render("(none)")}
+	vq := m.visibleQueries()
+	if len(vq) == 0 {
+		return []string{style.StatusMsg.Render(m.emptyLabel())}
 	}
 	var lines []string
-	for i, q := range m.queries {
+	for i, q := range vq {
 		name := trunc(q.Name, maxW-3)
 		if m.focused && m.activeSection == SectionQueries && i == m.cursor {
 			lines = append(lines, style.ListSelected.Render("▸ "+name))
@@ -394,11 +522,12 @@ func (m Model) buildQueryLines(maxW int) []string {
 }
 
 func (m Model) buildTemplateLines(maxW int) []string {
-	if len(m.templates) == 0 {
-		return []string{style.StatusMsg.Render("(none)")}
+	vt := m.visibleTemplates()
+	if len(vt) == 0 {
+		return []string{style.StatusMsg.Render(m.emptyLabel())}
 	}
 	var lines []string
-	for i, t := range m.templates {
+	for i, t := range vt {
 		name := t.Name
 		if name == "" {
 			name = fmt.Sprintf("template-%d", i)
@@ -414,13 +543,15 @@ func (m Model) buildTemplateLines(maxW int) []string {
 }
 
 func (m Model) buildTableLines(maxW int) []string {
-	if len(m.tables) == 0 {
-		return []string{style.StatusMsg.Render("(none)")}
+	vis := m.visibleTableIdx()
+	if len(vis) == 0 {
+		return []string{style.StatusMsg.Render(m.emptyLabel())}
 	}
 	var lines []string
 	idx := 0
 
-	for _, t := range m.tables {
+	for _, ti := range vis {
+		t := m.tables[ti]
 		selected := m.focused && m.activeSection == SectionTables && idx == m.cursor
 		arrow := "▶"
 		if t.Expanded {
@@ -479,11 +610,12 @@ func (m Model) buildTableLines(maxW int) []string {
 }
 
 func (m Model) buildHistoryLines(maxW int) []string {
-	if len(m.history) == 0 {
-		return []string{style.StatusMsg.Render("(none)")}
+	vh := m.visibleHistory()
+	if len(vh) == 0 {
+		return []string{style.StatusMsg.Render(m.emptyLabel())}
 	}
 	var lines []string
-	for i, h := range m.history {
+	for i, h := range vh {
 		sql := strings.ReplaceAll(h.SQL, "\n", " ")
 		sql = strings.ReplaceAll(sql, "\r", "")
 		sql = strings.ReplaceAll(sql, "\t", " ")

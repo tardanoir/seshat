@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/tardanoir/seshat/internal/config"
+	"github.com/tardanoir/seshat/internal/ui/filter"
 	"github.com/tardanoir/seshat/internal/ui/style"
 
 	"charm.land/bubbles/v2/key"
@@ -28,6 +29,7 @@ type ConnectionModel struct {
 	conns   map[string]config.Connection
 	cursor  int
 	current string
+	search  filter.Model
 	width   int
 	height  int
 }
@@ -62,33 +64,97 @@ func (m *ConnectionModel) SetSize(w, h int) {
 	m.height = h
 }
 
+// Searching reports whether the picker is in incremental-search mode.
+func (m ConnectionModel) Searching() bool { return m.search.Active() }
+
+// displayNames is the list shown: connections matching the search (by name or
+// label) followed by the always-present "new connection" entry.
+func (m ConnectionModel) displayNames() []string {
+	if !m.search.Active() {
+		return m.names
+	}
+	out := make([]string, 0, len(m.names))
+	for _, n := range m.names {
+		if n == newConnEntry {
+			continue
+		}
+		if m.search.Matches(n) || m.search.Matches(m.conns[n].DisplayLabel()) {
+			out = append(out, n)
+		}
+	}
+	return append(out, newConnEntry)
+}
+
 func (m ConnectionModel) Update(msg tea.Msg) (ConnectionModel, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
+		names := m.displayNames()
+		if m.search.Active() {
+			switch msg.String() {
+			case "esc":
+				m.search.Clear()
+				m.cursor = 0
+			case "up":
+				if m.cursor > 0 {
+					m.cursor--
+				}
+			case "down":
+				if m.cursor < len(names)-1 {
+					m.cursor++
+				}
+			case "enter":
+				return m.selectAt(names)
+			case "ctrl+d":
+				return m.deleteAt(names)
+			default:
+				if m.search.HandleKey(msg) {
+					m.cursor = 0
+				}
+			}
+			return m, nil
+		}
 		switch {
+		case msg.String() == "/":
+			m.search.Activate()
+			m.cursor = 0
 		case key.Matches(msg, style.Keys.Up), key.Matches(msg, key.NewBinding(key.WithKeys("k"))):
 			if m.cursor > 0 {
 				m.cursor--
 			}
 		case key.Matches(msg, style.Keys.Down), key.Matches(msg, key.NewBinding(key.WithKeys("j"))):
-			if m.cursor < len(m.names)-1 {
+			if m.cursor < len(names)-1 {
 				m.cursor++
 			}
 		case key.Matches(msg, style.Keys.Enter):
-			name := m.names[m.cursor]
-			if name == newConnEntry {
-				return m, func() tea.Msg { return OpenAddConnMsg{} }
-			}
-			conn := m.conns[name]
-			return m, func() tea.Msg {
-				return SwitchConnectionMsg{Name: name, Connection: conn}
-			}
+			return m.selectAt(names)
 		case key.Matches(msg, style.Keys.Delete):
-			name := m.names[m.cursor]
-			if name != newConnEntry {
-				return m, func() tea.Msg { return DeleteConnectionMsg{Name: name} }
-			}
+			return m.deleteAt(names)
 		}
+	}
+	return m, nil
+}
+
+func (m ConnectionModel) selectAt(names []string) (ConnectionModel, tea.Cmd) {
+	if m.cursor < 0 || m.cursor >= len(names) {
+		return m, nil
+	}
+	name := names[m.cursor]
+	if name == newConnEntry {
+		return m, func() tea.Msg { return OpenAddConnMsg{} }
+	}
+	conn := m.conns[name]
+	return m, func() tea.Msg {
+		return SwitchConnectionMsg{Name: name, Connection: conn}
+	}
+}
+
+func (m ConnectionModel) deleteAt(names []string) (ConnectionModel, tea.Cmd) {
+	if m.cursor < 0 || m.cursor >= len(names) {
+		return m, nil
+	}
+	name := names[m.cursor]
+	if name != newConnEntry {
+		return m, func() tea.Msg { return DeleteConnectionMsg{Name: name} }
 	}
 	return m, nil
 }
@@ -111,9 +177,13 @@ func connTypeBadge(driverType string) string {
 func (m ConnectionModel) View() string {
 	var b strings.Builder
 	b.WriteString(style.Title.Render("Connections"))
+	if m.search.Active() {
+		b.WriteString("   " + m.search.View())
+	}
 	b.WriteString("\n\n")
 
-	for i, name := range m.names {
+	names := m.displayNames()
+	for i, name := range names {
 		selected := i == m.cursor
 		prefix := "  "
 		if selected {
@@ -157,6 +227,7 @@ func (m ConnectionModel) View() string {
 	b.WriteString("\n")
 	hints := []string{
 		style.StatusKey.Render("↑↓") + " " + style.StatusKeyLabel.Render("navigate"),
+		style.StatusKey.Render("/") + " " + style.StatusKeyLabel.Render("search"),
 		style.StatusKey.Render("↵") + " " + style.StatusKeyLabel.Render("connect"),
 		style.StatusKey.Render("C-d") + " " + style.StatusKeyLabel.Render("delete"),
 		style.StatusKey.Render("Esc") + " " + style.StatusKeyLabel.Render("close"),
@@ -167,4 +238,3 @@ func (m ConnectionModel) View() string {
 	content := style.ModalOverlay.Width(modalW).Render(b.String())
 	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, content)
 }
-

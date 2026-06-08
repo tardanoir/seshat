@@ -5,6 +5,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/tardanoir/seshat/internal/nvimbridge"
 	"github.com/tardanoir/seshat/internal/ui/style"
 
 	"charm.land/bubbles/v2/key"
@@ -88,12 +89,20 @@ func highlightSQL(s string) string {
 type Model struct {
 	vimMode bool
 
+	// bridge is the embedded Neovim process. Non-nil only when vimMode is on and
+	// the nvim binary was found; otherwise vim mode degrades to the minimal j/k
+	// statement navigator below.
+	bridge *nvimbridge.Bridge
+
 	ta       textarea.Model
 	selRange *[2]int
 
 	sql     string
-	cursor  int
+	cursor  int // navigator: selected statement index
 	scrollY int
+
+	cursorLine int // embedded: mirrored 0-based buffer cursor line
+	cursorCol  int // embedded: mirrored 0-based byte cursor column
 
 	stmts   []statement
 	width   int
@@ -103,6 +112,9 @@ type Model struct {
 	completer *provider
 	comp      completion
 }
+
+// embedded reports whether vim mode is backed by a live embedded Neovim.
+func (m Model) embedded() bool { return m.vimMode && m.bridge != nil }
 
 type completion struct {
 	open      bool
@@ -121,7 +133,16 @@ type statement struct {
 func New(vimMode bool) Model {
 	m := Model{vimMode: vimMode, focused: true, completer: newProvider()}
 
-	if !vimMode {
+	if vimMode {
+		// Embed a real Neovim. If the binary is missing or the handshake fails,
+		// bridge stays nil and vim mode falls back to the j/k navigator.
+		if br, err := nvimbridge.Start("nvim", 80, 24); err == nil {
+			m.bridge = br
+		}
+		return m
+	}
+
+	{
 		ta := textarea.New()
 		ta.Placeholder = "Write a query or press Ctrl+E to open your editor"
 		ta.ShowLineNumbers = true
@@ -182,6 +203,12 @@ func New(vimMode bool) Model {
 }
 
 func (m Model) Value() string {
+	if m.embedded() {
+		if txt, err := m.bridge.LiveText(); err == nil {
+			return txt
+		}
+		return m.sql
+	}
 	if m.vimMode {
 		return m.sql
 	}
@@ -194,6 +221,9 @@ func (m Model) StmtCount() int { return len(m.stmts) }
 // In vim mode it returns the start line of the current statement; the AI
 // feature uses this to locate the comment block at the cursor.
 func (m Model) CursorLine() int {
+	if m.embedded() {
+		return m.bridge.LiveCursorLine()
+	}
 	if m.vimMode {
 		if len(m.stmts) > 0 && m.cursor < len(m.stmts) {
 			return m.stmts[m.cursor].startLine
@@ -207,16 +237,27 @@ func (m Model) StmtIndex() int {
 	if len(m.stmts) == 0 {
 		return 0
 	}
+	if m.embedded() {
+		return stmtIndexAt(m.stmts, m.cursorLine)
+	}
 	if m.vimMode {
 		return m.cursor
 	}
-	row := m.ta.Line()
-	for i, s := range m.stmts {
-		if row >= s.startLine && row <= s.endLine {
+	return stmtIndexAt(m.stmts, m.ta.Line())
+}
+
+// stmtIndexAt returns the index of the statement spanning the given 0-based
+// line, or the last statement when the line is past the end.
+func stmtIndexAt(stmts []statement, line int) int {
+	for i, s := range stmts {
+		if line >= s.startLine && line <= s.endLine {
 			return i
 		}
 	}
-	return len(m.stmts) - 1
+	if len(stmts) == 0 {
+		return 0
+	}
+	return len(stmts) - 1
 }
 
 func (m *Model) SetFocused(f bool) {
@@ -241,6 +282,17 @@ func (m Model) Focused() bool {
 func (m Model) CompletionOpen() bool { return m.comp.open }
 
 func (m Model) SelectedStatement() string {
+	if m.embedded() {
+		txt, err := m.bridge.LiveText()
+		if err != nil {
+			txt = m.sql
+		}
+		stmts := parseStatements(txt)
+		if len(stmts) == 0 {
+			return txt
+		}
+		return stmts[stmtIndexAt(stmts, m.bridge.LiveCursorLine())].sql
+	}
 	if len(m.stmts) == 0 {
 		return m.Value()
 	}
@@ -248,6 +300,13 @@ func (m Model) SelectedStatement() string {
 }
 
 func (m *Model) SetValue(s string) {
+	if m.embedded() {
+		_ = m.bridge.SetText(s)
+		m.sql = s
+		m.cursorLine = 0
+		m.stmts = parseStatements(s)
+		return
+	}
 	if m.vimMode {
 		m.sql = s
 		m.cursor = 0
@@ -278,6 +337,10 @@ func (m *Model) updateSelRange() {
 func (m *Model) SetSize(w, h int) {
 	m.width = w
 	m.height = h
+	if m.embedded() {
+		m.bridge.Resize(m.contentWidth(), m.contentHeight())
+		return
+	}
 	if !m.vimMode {
 		// inner width = w - hPad ; inner height = h - 1 (header row)
 		m.ta.SetWidth(w - 4)
@@ -296,6 +359,9 @@ func (m *Model) SetSchema(tables []TableRef, columns []ColumnRef) {
 const completionLimit = 8
 
 func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
+	if m.embedded() {
+		return m.updateEmbedded(msg)
+	}
 	if m.vimMode {
 		return m.updateVim(msg)
 	}
@@ -400,20 +466,24 @@ func (m *Model) refreshCompletion() {
 	}
 	row := m.ta.Line()
 	lines := strings.Split(m.ta.Value(), "\n")
-	if row < 0 || row >= len(lines) {
-		m.closeCompletion()
-		return
-	}
 	col := m.ta.LineInfo().ColumnOffset + m.ta.LineInfo().StartColumn
+	m.comp = m.buildCompletion(lines, row, col)
+}
+
+// buildCompletion computes the completion popup for a cursor at (row, col) in
+// lines, where col is a rune index. It returns a closed completion when there's
+// nothing to show. Shared by the textarea and embedded-nvim editors.
+func (m *Model) buildCompletion(lines []string, row, col int) completion {
+	if m.completer == nil || row < 0 || row >= len(lines) {
+		return completion{}
+	}
 	line := lines[row]
 	if !cursorAtWordEnd(line, col) {
-		m.closeCompletion()
-		return
+		return completion{}
 	}
 	word, wordStart := wordBeforeCursor(line, col)
 	if word == "" {
-		m.closeCompletion()
-		return
+		return completion{}
 	}
 
 	var sb strings.Builder
@@ -430,16 +500,13 @@ func (m *Model) refreshCompletion() {
 	ctx := sqlContextAt(sb.String())
 	items := m.completer.suggest(word, ctx, completionLimit)
 	if len(items) == 0 {
-		m.closeCompletion()
-		return
+		return completion{}
 	}
 	selected := 0
-	if m.comp.open && m.comp.prefix == word {
-		if m.comp.selected < len(items) {
-			selected = m.comp.selected
-		}
+	if m.comp.open && m.comp.prefix == word && m.comp.selected < len(items) {
+		selected = m.comp.selected
 	}
-	m.comp = completion{
+	return completion{
 		open:      true,
 		items:     items,
 		selected:  selected,
@@ -561,7 +628,8 @@ func (m Model) viewTextarea() string {
 	header := m.renderHeader()
 	body := m.ta.View()
 	if m.comp.open {
-		body = m.overlayPopup(body)
+		cx, cy := m.cursorVisualPos()
+		body = m.overlayPopupAt(body, cx, cy)
 	}
 	content := header + "\n" + body
 	content = style.PrefixFocusBar(content, m.ta.Focused())
@@ -581,7 +649,9 @@ func (m Model) cursorVisualPos() (int, int) {
 	return x, y
 }
 
-func (m Model) overlayPopup(body string) string {
+// overlayPopupAt composites the completion popup onto body near the cursor at
+// visual position (cx, cy) — body-relative columns/rows.
+func (m Model) overlayPopupAt(body string, cx, cy int) string {
 	popup := m.renderPopup()
 	if popup == "" {
 		return body
@@ -598,7 +668,6 @@ func (m Model) overlayPopup(body string) string {
 	lines := strings.Split(body, "\n")
 	bodyH := len(lines)
 	contentW := m.contentWidth()
-	cx, cy := m.cursorVisualPos()
 
 	anchorX := cx - 1
 	if anchorX < 0 {
@@ -682,6 +751,9 @@ func (m Model) renderPopup() string {
 }
 
 func (m Model) View() string {
+	if m.embedded() {
+		return m.viewEmbedded()
+	}
 	if m.vimMode {
 		return m.viewVim()
 	}

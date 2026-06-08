@@ -48,6 +48,7 @@ const (
 	ModalExport
 	ModalHelp
 	ModalAIReview
+	ModalHistory
 )
 
 // Messages
@@ -97,6 +98,7 @@ type App struct {
 	saveModal      modal.SaveModel
 	templatePicker modal.TemplatePickerModel
 	templateVars   modal.TemplateVarsModel
+	historyPicker  modal.HistoryPickerModel
 	confirmModal   modal.ConfirmModel
 	exportModal    modal.ExportModel
 	helpModal      modal.HelpModel
@@ -165,6 +167,7 @@ func (a App) Init() tea.Cmd {
 		a.loadTemplatesCmd(),
 		a.loadHistoryCmd(),
 		a.checkUpdateCmd(),
+		a.preview.NvimSubscribe(),
 	)
 }
 
@@ -462,6 +465,7 @@ func (a *App) layout() {
 	a.saveModal.SetSize(a.width, a.height)
 	a.templatePicker.SetSize(a.width, a.height)
 	a.templateVars.SetSize(a.width, a.height)
+	a.historyPicker.SetSize(a.width, a.height)
 	a.confirmModal.SetSize(a.width, a.height)
 	a.exportModal.SetSize(a.width, a.height)
 	a.helpModal.SetSize(a.width, a.height)
@@ -502,12 +506,25 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.ready = true
 		return a, nil
 
+	case queryeditor.NvimRedrawMsg:
+		// Embedded nvim flushed a frame: refresh the editor's cached state and
+		// keep listening. Handled regardless of focus so async updates repaint.
+		var cmd tea.Cmd
+		a.preview, cmd = a.preview.Update(msg)
+		return a, tea.Batch(cmd, a.preview.NvimSubscribe())
+
+	case queryeditor.NvimExitedMsg:
+		a.preview.DisableNvim()
+		a.status.SetError("nvim exited — vim mode degraded to navigator")
+		return a, nil
+
 	case tea.KeyMsg:
 		if key.Matches(msg, style.Keys.Quit) {
 			if a.db != nil {
 				a.db.Close(context.Background())
 			}
 			a.closeTunnel()
+			a.preview.Close()
 			return a, tea.Quit
 		}
 
@@ -518,6 +535,10 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if key.Matches(msg, style.Keys.Escape) {
 			if a.modalState == ModalAddConn {
 				// Let the addconn modal handle its own Esc (step back).
+				return a.updateModal(msg)
+			}
+			if a.modalSearching() {
+				// Let a searchable picker exit its search instead of closing.
 				return a.updateModal(msg)
 			}
 			if a.modalState != ModalNone {
@@ -534,6 +555,13 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch {
 		case key.Matches(msg, style.Keys.Tab):
 			if a.focus == FocusPreview && a.preview.CompletionOpen() {
+				var cmd tea.Cmd
+				a.preview, cmd = a.preview.Update(msg)
+				return a, cmd
+			}
+			// While editing in embedded nvim, Tab indents; only switch panes
+			// from normal/visual mode (or the non-embedded editor).
+			if a.focus == FocusPreview && a.preview.NvimInsertMode() {
 				var cmd tea.Cmd
 				a.preview, cmd = a.preview.Update(msg)
 				return a, cmd
@@ -564,6 +592,12 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			a.modalState = ModalConnection
 			a.connModal = modal.NewConnection(a.cfg.Connections, a.connName)
 			a.connModal.SetSize(a.width, a.height)
+			return a, nil
+		case key.Matches(msg, style.Keys.History):
+			h, _ := query.LoadHistory()
+			a.modalState = ModalHistory
+			a.historyPicker = modal.NewHistoryPicker(h)
+			a.historyPicker.SetSize(a.width, a.height)
 			return a, nil
 		case key.Matches(msg, style.Keys.Export):
 			if a.results.CurrentResult() == nil {
@@ -855,6 +889,13 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.status.SetMessage("Query loaded from history")
 		return a, nil
 
+	case modal.HistorySelectedMsg:
+		a.modalState = ModalNone
+		a.preview.SetValue(msg.SQL)
+		a.setFocus(FocusPreview)
+		a.status.SetMessage("Query loaded from history")
+		return a, nil
+
 	case resultstable.CopiedToClipboardMsg:
 		if msg.Err != nil {
 			a.status.SetError("Copy failed: " + msg.Err.Error())
@@ -948,6 +989,20 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return a, tea.Batch(cmds...)
 }
 
+// modalSearching reports whether the active modal is a picker currently in
+// incremental-search mode, so Esc can exit search rather than close the modal.
+func (a App) modalSearching() bool {
+	switch a.modalState {
+	case ModalConnection:
+		return a.connModal.Searching()
+	case ModalTemplatePicker:
+		return a.templatePicker.Searching()
+	case ModalHistory:
+		return a.historyPicker.Searching()
+	}
+	return false
+}
+
 func (a App) updateModal(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
 	switch a.modalState {
@@ -971,6 +1026,8 @@ func (a App) updateModal(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.helpModal, cmd = a.helpModal.Update(msg)
 	case ModalAIReview:
 		a.aiReview, cmd = a.aiReview.Update(msg)
+	case ModalHistory:
+		a.historyPicker, cmd = a.historyPicker.Update(msg)
 	}
 	return a, cmd
 }
@@ -1047,6 +1104,8 @@ func (a App) View() tea.View {
 		return view(a.helpModal.View())
 	case ModalAIReview:
 		return view(a.aiReview.View())
+	case ModalHistory:
+		return view(a.historyPicker.View())
 	}
 
 	return view(full)

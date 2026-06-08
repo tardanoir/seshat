@@ -17,6 +17,7 @@ type Keybindings struct {
 	Save          string `toml:"save"`
 	Template      string `toml:"template"`
 	ConnPick      string `toml:"connection"`
+	History       string `toml:"history"`
 	ToggleSidebar string `toml:"toggle_sidebar"`
 	Export        string `toml:"export"`
 	Tab           string `toml:"tab"`
@@ -248,6 +249,7 @@ password = ""
 # save = "ctrl+w"
 # template = "ctrl+t"
 # connection = "ctrl+n"
+# history = "ctrl+h"
 # toggle_sidebar = "ctrl+\\"
 # tab = "tab"
 # shift_tab = "shift+tab"

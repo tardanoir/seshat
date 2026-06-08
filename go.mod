@@ -10,6 +10,7 @@ require (
 	github.com/atotto/clipboard v0.1.4
 	github.com/charmbracelet/x/ansi v0.11.6
 	github.com/jackc/pgx/v5 v5.8.0
+	github.com/neovim/go-client v1.2.1
 	golang.org/x/crypto v0.49.0
 	modernc.org/sqlite v1.46.1
 )

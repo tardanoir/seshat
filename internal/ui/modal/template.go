@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	"github.com/tardanoir/seshat/internal/query"
+	"github.com/tardanoir/seshat/internal/ui/filter"
 	"github.com/tardanoir/seshat/internal/ui/style"
 
 	"charm.land/bubbles/v2/key"
@@ -20,6 +21,7 @@ type TemplateResultMsg struct {
 type TemplatePickerModel struct {
 	templates []query.Template
 	cursor    int
+	search    filter.Model
 	width     int
 	height    int
 }
@@ -33,21 +35,68 @@ func (m *TemplatePickerModel) SetSize(w, h int) {
 	m.height = h
 }
 
+// Searching reports whether the picker is in incremental-search mode.
+func (m TemplatePickerModel) Searching() bool { return m.search.Active() }
+
+// visible returns the templates matching the current search (by name or
+// description), or all of them when not searching.
+func (m TemplatePickerModel) visible() []query.Template {
+	if !m.search.Active() {
+		return m.templates
+	}
+	out := make([]query.Template, 0, len(m.templates))
+	for _, t := range m.templates {
+		if m.search.Matches(t.Name) || m.search.Matches(t.Description) {
+			out = append(out, t)
+		}
+	}
+	return out
+}
+
 func (m TemplatePickerModel) Update(msg tea.Msg) (TemplatePickerModel, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
+		vis := m.visible()
+		if m.search.Active() {
+			switch msg.String() {
+			case "esc":
+				m.search.Clear()
+				m.cursor = 0
+			case "up":
+				if m.cursor > 0 {
+					m.cursor--
+				}
+			case "down":
+				if m.cursor < len(vis)-1 {
+					m.cursor++
+				}
+			case "enter":
+				if m.cursor < len(vis) {
+					t := vis[m.cursor]
+					return m, func() tea.Msg { return OpenTemplateVarsMsg{Template: t} }
+				}
+			default:
+				if m.search.HandleKey(msg) {
+					m.cursor = 0
+				}
+			}
+			return m, nil
+		}
 		switch {
+		case msg.String() == "/":
+			m.search.Activate()
+			m.cursor = 0
 		case key.Matches(msg, style.Keys.Up):
 			if m.cursor > 0 {
 				m.cursor--
 			}
 		case key.Matches(msg, style.Keys.Down):
-			if m.cursor < len(m.templates)-1 {
+			if m.cursor < len(vis)-1 {
 				m.cursor++
 			}
 		case key.Matches(msg, style.Keys.Enter):
-			if m.cursor < len(m.templates) {
-				t := m.templates[m.cursor]
+			if m.cursor < len(vis) {
+				t := vis[m.cursor]
 				return m, func() tea.Msg {
 					return OpenTemplateVarsMsg{Template: t}
 				}
@@ -60,14 +109,21 @@ func (m TemplatePickerModel) Update(msg tea.Msg) (TemplatePickerModel, tea.Cmd) 
 func (m TemplatePickerModel) View() string {
 	var b strings.Builder
 	b.WriteString(style.Title.Render("Select Template"))
+	if m.search.Active() {
+		b.WriteString("   " + m.search.View())
+	}
 	b.WriteString("\n\n")
 
-	if len(m.templates) == 0 {
+	vis := m.visible()
+	switch {
+	case len(m.templates) == 0:
 		b.WriteString(style.ListItem.Render("No templates found."))
 		b.WriteString("\n")
 		b.WriteString(style.ListItem.Render("Add .sql files to ~/.config/seshat/templates/"))
-	} else {
-		for i, t := range m.templates {
+	case len(vis) == 0:
+		b.WriteString(style.ListItem.Render("No matches."))
+	default:
+		for i, t := range vis {
 			name := t.Name
 			if name == "" {
 				name = "(unnamed)"
@@ -84,7 +140,7 @@ func (m TemplatePickerModel) View() string {
 		}
 	}
 	b.WriteString("\n")
-	b.WriteString(style.ListItem.Render("↑↓ navigate  ↵ select  Esc close"))
+	b.WriteString(style.ListItem.Render("↑↓ navigate  / search  ↵ select  Esc close"))
 
 	modalW := 60
 	content := style.ModalOverlay.Width(modalW).Render(b.String())

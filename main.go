@@ -60,6 +60,7 @@ func main() {
 		Save:          cfg.Keys.Save,
 		Template:      cfg.Keys.Template,
 		ConnPick:      cfg.Keys.ConnPick,
+		History:       cfg.Keys.History,
 		ToggleSidebar: cfg.Keys.ToggleSidebar,
 		Export:        cfg.Keys.Export,
 		Tab:           cfg.Keys.Tab,
