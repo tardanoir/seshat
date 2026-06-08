@@ -1,0 +1,53 @@
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  goreleaser:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.25.5"
+
+      - name: Run GoReleaser
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          version: "~> v2"
+          args: release --clean
+        env:
+          # Built-in token: creates the GitHub release.
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # PAT with `repo` scope on tardanoir/homebrew-tap and
+          # tardanoir/scoop-bucket (cross-repo pushes).
+          TAP_GITHUB_TOKEN: ${{ secrets.TAP_GITHUB_TOKEN }}
+          # AUR SSH private key (matching the public key on your AUR account).
+          AUR_KEY: ${{ secrets.AUR_KEY }}
+
+      # Publish .deb / .rpm to a Cloudsmith repo so users get
+      # `apt install` / `dnf install` after adding the source.
+      - name: Push packages to Cloudsmith
+        if: ${{ env.CLOUDSMITH_API_KEY != '' }}
+        env:
+          CLOUDSMITH_API_KEY: ${{ secrets.CLOUDSMITH_API_KEY }}
+        run: |
+          pipx install cloudsmith-cli
+          # deb: one push per distro you want to support.
+          for f in dist/*.deb; do
+            cloudsmith push deb tardanoir/seshat/any-distro/any-version "$f"
+          done
+          for f in dist/*.rpm; do
+            cloudsmith push rpm tardanoir/seshat/any-distro/any-version "$f"
+          done
