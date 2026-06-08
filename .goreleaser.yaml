@@ -42,6 +42,9 @@ release:
   github:
     owner: tardanoir
     name: seshat
+  # Overwrite existing same-named assets instead of failing, so a
+  # re-run of a failed release job is idempotent.
+  mode: replace
 
 homebrew_casks:
   - repository:
