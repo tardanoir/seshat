@@ -70,11 +70,33 @@ I'll be adding support for Mysql and Mariadb soon. Other databases will be consi
 
 ## Install
 
+### Quick install (macOS / Linux)
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/tardanoir/seshat/main/install.sh | sh
+```
+
+Detects your OS/arch and installs the latest release to `~/.local/bin`
+(or `/usr/local/bin` as root). Override with `SESHAT_VERSION` / `SESHAT_BIN_DIR`.
+
 ### Homebrew (macOS / Linux)
 
 ```sh
 brew tap tardanoir/tap
 brew install seshat
+```
+
+### Arch (AUR)
+
+```sh
+yay -S seshat-bin
+```
+
+### Windows (Scoop)
+
+```sh
+scoop bucket add tardanoir https://github.com/tardanoir/scoop-bucket
+scoop install seshat
 ```
 
 ### Debian / Ubuntu (.deb)
@@ -97,12 +119,7 @@ sudo rpm -i seshat_*.rpm
 
 ```sh
 go install github.com/tardanoir/seshat@latest
-
 ```
-
-### Arch
-
-Soon. Need to figure out how to add the project to the AUR.
 
 ### From source
 
