@@ -41,8 +41,19 @@ func (c *CLI) Generate(ctx context.Context, req ai.Request) (ai.Response, error)
 	if len(c.Argv) == 0 {
 		return ai.Response{}, errors.New("cli: argv not configured")
 	}
-	prompt := ai.SystemPrompt + "\n\n" + ai.BuildPrompt(req)
+	raw, err := c.runPrompt(ctx, ai.SystemPrompt+"\n\n"+ai.BuildPrompt(req))
+	if err != nil {
+		return ai.Response{}, err
+	}
+	return ai.Response{
+		SQL:      ai.ExtractSQL(raw),
+		Raw:      raw,
+		Provider: c.Name(),
+	}, nil
+}
 
+// runPrompt runs the configured subprocess with prompt and returns its stdout.
+func (c *CLI) runPrompt(ctx context.Context, prompt string) (string, error) {
 	args, useStdin := substitutePrompt(c.Argv, prompt)
 
 	if c.Timeout > 0 {
@@ -60,7 +71,7 @@ func (c *CLI) Generate(ctx context.Context, req ai.Request) (ai.Response, error)
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
 		if ctx.Err() != nil {
-			return ai.Response{}, ctx.Err()
+			return "", ctx.Err()
 		}
 		// Some CLIs (e.g. claude when not logged in) print errors to stdout
 		// rather than stderr. Fall back to stdout when stderr is empty so the
@@ -72,14 +83,39 @@ func (c *CLI) Generate(ctx context.Context, req ai.Request) (ai.Response, error)
 		if msg == "" {
 			msg = err.Error()
 		}
-		return ai.Response{}, fmt.Errorf("%s: %s", c.Name(), msg)
+		return "", fmt.Errorf("%s: %s", c.Name(), msg)
 	}
-	raw := stdout.String()
-	return ai.Response{
-		SQL:      ai.ExtractSQL(raw),
-		Raw:      raw,
-		Provider: c.Name(),
-	}, nil
+	return stdout.String(), nil
+}
+
+// ChatStream implements ai.ChatProvider for CLI tools by flattening the
+// conversation into one prompt and emitting the full reply as a single chunk
+// (no token-level streaming).
+func (c *CLI) ChatStream(ctx context.Context, req ai.ChatRequest) (<-chan ai.ChatChunk, error) {
+	if len(c.Argv) == 0 {
+		return nil, errors.New("cli: argv not configured")
+	}
+	var b strings.Builder
+	b.WriteString(ai.ChatSystemPrompt + "\n\n")
+	b.WriteString(ai.BuildChatContext(req) + "\n\n")
+	for _, m := range req.Messages {
+		b.WriteString(strings.ToUpper(m.Role) + ": " + m.Content + "\n")
+	}
+	b.WriteString("ASSISTANT: ")
+	prompt := b.String()
+
+	ch := make(chan ai.ChatChunk, 2)
+	go func() {
+		defer close(ch)
+		out, err := c.runPrompt(ctx, prompt)
+		if err != nil {
+			ch <- ai.ChatChunk{Err: err}
+			return
+		}
+		ch <- ai.ChatChunk{Delta: strings.TrimSpace(out)}
+		ch <- ai.ChatChunk{Done: true}
+	}()
+	return ch, nil
 }
 
 func substitutePrompt(argv []string, prompt string) (out []string, stdin bool) {
