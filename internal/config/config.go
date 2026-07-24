@@ -26,6 +26,7 @@ type Keybindings struct {
 	Delete        string `toml:"delete"`
 	Suspend       string `toml:"suspend"`
 	AIGenerate    string `toml:"ai_generate"`
+	AIChat        string `toml:"ai_chat"`
 }
 
 type Config struct {
@@ -231,6 +232,39 @@ func (cfg *Config) RemoveConnection(name string) error {
 	return cfg.Save()
 }
 
+// AddAIProvider adds or updates an AI provider and persists. The first provider
+// added becomes the default.
+func (cfg *Config) AddAIProvider(name string, p AIProviderConf) error {
+	if cfg.AI.Providers == nil {
+		cfg.AI.Providers = make(map[string]AIProviderConf)
+	}
+	cfg.AI.Providers[name] = p
+	if cfg.AI.DefaultProvider == "" {
+		cfg.AI.DefaultProvider = name
+	}
+	return cfg.Save()
+}
+
+// RemoveAIProvider deletes an AI provider and persists. If it was the default,
+// the default falls back to any remaining provider (or empty).
+func (cfg *Config) RemoveAIProvider(name string) error {
+	delete(cfg.AI.Providers, name)
+	if cfg.AI.DefaultProvider == name {
+		cfg.AI.DefaultProvider = ""
+		for n := range cfg.AI.Providers {
+			cfg.AI.DefaultProvider = n
+			break
+		}
+	}
+	return cfg.Save()
+}
+
+// SetDefaultAIProvider sets the active provider and persists.
+func (cfg *Config) SetDefaultAIProvider(name string) error {
+	cfg.AI.DefaultProvider = name
+	return cfg.Save()
+}
+
 const defaultConfig = `default_connection = "local"
 editor = "nvim"
 vim_mode = false
@@ -257,12 +291,16 @@ password = ""
 # delete = "ctrl+d"
 # suspend = "ctrl+z"
 # ai_generate = "ctrl+a"
+# ai_chat = "ctrl+g"
 
 # AI SQL generation. Place the cursor on a "-- ..." comment in the editor and
 # press the AI hotkey to ask the configured provider to generate SQL. The
-# response opens in a modal you can accept or reject.
+# response opens in a modal you can accept or reject. Press ai_chat (ctrl+g) for
+# a multi-turn chat; from there ctrl+p manages providers and keys in-app.
 #
-# api_key supports "$ENV_VAR" to read from the environment.
+# api_key supports "$ENV_VAR" to read from the environment, or
+# "keyring:<name>" to read from the OS secret store. The in-app provider
+# manager writes keys to the keyring automatically (no secret in this file).
 # argv supports "{prompt}" as a placeholder; without it, the prompt is sent
 # on stdin instead.
 #

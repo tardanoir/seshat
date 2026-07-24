@@ -14,6 +14,7 @@ import (
 	"github.com/tardanoir/seshat/internal/db"
 	"github.com/tardanoir/seshat/internal/editor"
 	"github.com/tardanoir/seshat/internal/query"
+	"github.com/tardanoir/seshat/internal/secret"
 	"github.com/tardanoir/seshat/internal/ssh"
 	"github.com/tardanoir/seshat/internal/ui/modal"
 	"github.com/tardanoir/seshat/internal/ui/queryeditor"
@@ -49,6 +50,9 @@ const (
 	ModalHelp
 	ModalAIReview
 	ModalHistory
+	ModalAIChat
+	ModalAIProviders
+	ModalAIProviderForm
 )
 
 // Messages
@@ -103,11 +107,15 @@ type App struct {
 	exportModal    modal.ExportModel
 	helpModal      modal.HelpModel
 	aiReview       modal.AIReviewModel
+	aiChat         modal.AIChatModel
+	aiProviders    modal.AIProvidersModel
+	aiProviderForm modal.AIProviderFormModel
 	deleteTarget   string
 	lastSQL        string
 
 	aiProvider ai.Provider
 	aiCancel   context.CancelFunc
+	aiChatCh   <-chan ai.ChatChunk
 
 	focus          Focus
 	sidebarVisible bool
@@ -158,6 +166,39 @@ func (a *App) closeTunnel() {
 		a.tunnel.Close()
 		a.tunnel = nil
 	}
+}
+
+// rebuildAIProvider reconstructs the active provider after the config changes
+// (provider added/edited/removed or default switched).
+func (a *App) rebuildAIProvider() {
+	a.aiProvider = nil
+	if a.cfg.AI.DefaultProvider == "" {
+		return
+	}
+	if prov, err := providers.Build(aiConfigFrom(a.cfg.AI)); err == nil {
+		a.aiProvider = prov
+	} else {
+		a.status.SetError("AI: " + err.Error())
+	}
+}
+
+// openAIEntry opens the chat when a provider is configured, otherwise the
+// provider manager so the user can set one up first.
+func (a *App) openAIEntry() {
+	if a.aiProvider == nil {
+		a.status.SetMessage("No AI provider configured — add one")
+		a.openAIProviders()
+		return
+	}
+	a.aiChat = modal.NewAIChat(a.aiProvider.Name())
+	a.aiChat.SetSize(a.width, a.height)
+	a.modalState = ModalAIChat
+}
+
+func (a *App) openAIProviders() {
+	a.aiProviders = modal.NewAIProviders(a.cfg.AI)
+	a.aiProviders.SetSize(a.width, a.height)
+	a.modalState = ModalAIProviders
 }
 
 func (a App) Init() tea.Cmd {
@@ -470,6 +511,9 @@ func (a *App) layout() {
 	a.exportModal.SetSize(a.width, a.height)
 	a.helpModal.SetSize(a.width, a.height)
 	a.aiReview.SetSize(a.width, a.height)
+	a.aiChat.SetSize(a.width, a.height)
+	a.aiProviders.SetSize(a.width, a.height)
+	a.aiProviderForm.SetSize(a.width, a.height)
 }
 
 func (a *App) toggleMainFocus() {
@@ -533,8 +577,8 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		if key.Matches(msg, style.Keys.Escape) {
-			if a.modalState == ModalAddConn {
-				// Let the addconn modal handle its own Esc (step back).
+			if a.modalState == ModalAddConn || a.modalState == ModalAIProviderForm {
+				// Let the form modal handle its own Esc (step back).
 				return a.updateModal(msg)
 			}
 			if a.modalSearching() {
@@ -616,6 +660,9 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return a, nil
 			}
 			return a, a.startAIGenerationCmd()
+		case key.Matches(msg, style.Keys.AIChat):
+			a.openAIEntry()
+			return a, nil
 		}
 
 		// ? help — only when not typing in the query editor
@@ -801,6 +848,125 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.modalState = ModalNone
 		a.setFocus(FocusPreview)
 		a.status.SetMessage("AI suggestion discarded")
+		return a, nil
+
+	case modal.AIChatSubmitMsg:
+		cp, ok := a.aiProvider.(ai.ChatProvider)
+		if !ok {
+			a.aiChat.EndTurn()
+			a.status.SetError("AI: current provider doesn't support chat")
+			return a, nil
+		}
+		dialect := ""
+		if a.db != nil {
+			dialect = a.db.Dialect()
+		}
+		req := buildChatRequest(a.connName, dialect, a.aiChat.History(), a.schemaTables, a.schemaColumnsBy)
+		if a.aiCancel != nil {
+			a.aiCancel()
+		}
+		ctx, cancel := context.WithCancel(context.Background())
+		a.aiCancel = cancel
+		return a, startChatCmd(ctx, cp, req)
+
+	case aiChatStreamMsg:
+		a.aiChatCh = msg.ch
+		return a, recvChatCmd(msg.ch)
+
+	case AIChatChunkMsg:
+		if msg.Err != nil {
+			a.aiChat.EndTurn()
+			a.aiCancel = nil
+			a.aiChatCh = nil
+			if !errors.Is(msg.Err, context.Canceled) {
+				a.status.SetError("AI: " + msg.Err.Error())
+			}
+			return a, nil
+		}
+		if msg.Delta != "" {
+			a.aiChat.AppendDelta(msg.Delta)
+		}
+		if msg.Done {
+			a.aiChat.EndTurn()
+			a.aiCancel = nil
+			a.aiChatCh = nil
+			return a, nil
+		}
+		return a, recvChatCmd(a.aiChatCh)
+
+	case modal.AIChatInsertMsg:
+		a.modalState = ModalNone
+		a.preview.SetValue(msg.SQL)
+		a.setFocus(FocusPreview)
+		a.status.SetMessage("SQL inserted from chat")
+		return a, nil
+
+	case modal.AIChatRunMsg:
+		a.modalState = ModalNone
+		a.preview.SetValue(msg.SQL)
+		a.setFocus(FocusPreview)
+		a.status.SetMessage("Running SQL from chat...")
+		return a, a.executeSelectedCmd()
+
+	case modal.OpenAIProvidersMsg:
+		a.openAIProviders()
+		return a, nil
+
+	case modal.AIProviderSetDefaultMsg:
+		if err := a.cfg.SetDefaultAIProvider(msg.Name); err != nil {
+			a.status.SetError("Save failed: " + err.Error())
+			return a, nil
+		}
+		a.rebuildAIProvider()
+		a.status.SetMessage("AI provider: " + msg.Name)
+		a.openAIProviders()
+		return a, nil
+
+	case modal.OpenAIProviderFormMsg:
+		conf := config.AIProviderConf{}
+		if msg.Edit != "" {
+			conf = a.cfg.AI.Providers[msg.Edit]
+		}
+		a.aiProviderForm = modal.NewAIProviderForm(msg.Edit, conf)
+		a.aiProviderForm.SetSize(a.width, a.height)
+		a.modalState = ModalAIProviderForm
+		return a, nil
+
+	case modal.BackToAIProvidersMsg:
+		a.openAIProviders()
+		return a, nil
+
+	case modal.DeleteAIProviderMsg:
+		_ = secret.Delete(msg.Name)
+		if err := a.cfg.RemoveAIProvider(msg.Name); err != nil {
+			a.status.SetError("Delete failed: " + err.Error())
+			return a, nil
+		}
+		a.rebuildAIProvider()
+		a.status.SetMessage("AI provider removed: " + msg.Name)
+		a.openAIProviders()
+		return a, nil
+
+	case modal.SaveAIProviderMsg:
+		conf := msg.Conf
+		if conf.Kind != "cli" {
+			if msg.RawKey != "" {
+				if err := secret.Set(msg.Name, msg.RawKey); err != nil {
+					a.status.SetError("Keyring unavailable: " + err.Error() + " — set api_key manually in config.toml")
+					return a, nil
+				}
+				conf.APIKey = "keyring:" + msg.Name
+			} else if existing, ok := a.cfg.AI.Providers[msg.Name]; ok {
+				conf.APIKey = existing.APIKey // keep current key on edit
+			}
+		}
+		if err := a.cfg.AddAIProvider(msg.Name, conf); err != nil {
+			a.status.SetError("Save failed: " + err.Error())
+			return a, nil
+		}
+		a.rebuildAIProvider()
+		a.status.SetMessage("AI provider saved: " + msg.Name)
+		a.openAIProviders()
 		return a, nil
 
 	case modal.ConfirmMsg:
@@ -1028,6 +1194,12 @@ func (a App) updateModal(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.aiReview, cmd = a.aiReview.Update(msg)
 	case ModalHistory:
 		a.historyPicker, cmd = a.historyPicker.Update(msg)
+	case ModalAIChat:
+		a.aiChat, cmd = a.aiChat.Update(msg)
+	case ModalAIProviders:
+		a.aiProviders, cmd = a.aiProviders.Update(msg)
+	case ModalAIProviderForm:
+		a.aiProviderForm, cmd = a.aiProviderForm.Update(msg)
 	}
 	return a, cmd
 }
@@ -1106,6 +1278,12 @@ func (a App) View() tea.View {
 		return view(a.aiReview.View())
 	case ModalHistory:
 		return view(a.historyPicker.View())
+	case ModalAIChat:
+		return view(a.aiChat.View())
+	case ModalAIProviders:
+		return view(a.aiProviders.View())
+	case ModalAIProviderForm:
+		return view(a.aiProviderForm.View())
 	}
 
 	return view(full)

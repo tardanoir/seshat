@@ -34,3 +34,34 @@ type Provider interface {
 	Name() string
 	Generate(ctx context.Context, req Request) (Response, error)
 }
+
+// ChatMessage is one turn in a multi-turn conversation.
+type ChatMessage struct {
+	Role    string // "system" | "user" | "assistant"
+	Content string
+}
+
+// ChatRequest is a multi-turn chat completion request. Dialect/Connection/Schema
+// let providers ground replies in the live database, mirroring Request.
+type ChatRequest struct {
+	Messages   []ChatMessage
+	Dialect    string
+	Connection string
+	Schema     []SchemaTable
+}
+
+// ChatChunk is a single streamed delta. The stream ends with a chunk where
+// Done is true (Delta empty) or where Err is non-nil.
+type ChatChunk struct {
+	Delta string
+	Done  bool
+	Err   error
+}
+
+// ChatProvider is the optional capability for multi-turn chat with token
+// streaming. Callers type-assert Provider to ChatProvider and degrade to a
+// friendly message when a provider doesn't implement it.
+type ChatProvider interface {
+	Provider
+	ChatStream(ctx context.Context, req ChatRequest) (<-chan ChatChunk, error)
+}
