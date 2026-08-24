@@ -2,6 +2,7 @@ package db
 
 import (
 	"context"
+	"sync"
 	"time"
 )
 
@@ -35,14 +36,20 @@ type Driver interface {
 	Close(ctx context.Context) error
 }
 
-// DB wraps a Driver with a connection name.
+// DB wraps a Driver with a connection name. Drivers hold a single underlying
+// connection that is not safe for concurrent use, and Bubble Tea runs every
+// tea.Cmd in its own goroutine, so mu serializes all driver access.
 type DB struct {
+	mu      sync.Mutex
 	Driver  Driver
 	Name    string
 	MaxRows int
 }
 
 func (d *DB) Execute(ctx context.Context, sql string) (*QueryResult, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
 	result, err := d.Driver.Execute(ctx, sql)
 	if err != nil {
 		return nil, err
@@ -61,6 +68,9 @@ type maxRowsSetter interface {
 
 // this is used only in the export func, so the user get's all the results
 func (d *DB) ExecuteUnlimited(ctx context.Context, sql string) (*QueryResult, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
 	if setter, ok := d.Driver.(maxRowsSetter); ok {
 		setter.SetMaxRows(0)
 		defer setter.SetMaxRows(d.MaxRows)
@@ -69,14 +79,23 @@ func (d *DB) ExecuteUnlimited(ctx context.Context, sql string) (*QueryResult, er
 }
 
 func (d *DB) ListTables(ctx context.Context) ([]TableInfo, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
 	return d.Driver.ListTables(ctx)
 }
 
 func (d *DB) ListColumns(ctx context.Context, schema, tableName string) ([]ColumnInfo, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
 	return d.Driver.ListColumns(ctx, schema, tableName)
 }
 
 func (d *DB) Close(ctx context.Context) error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
 	return d.Driver.Close(ctx)
 }
 
