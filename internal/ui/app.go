@@ -105,6 +105,7 @@ type App struct {
 	aiReview       modal.AIReviewModel
 	deleteTarget   string
 	lastSQL        string
+	queryInFlight  bool
 
 	aiProvider ai.Provider
 	aiCancel   context.CancelFunc
@@ -380,6 +381,7 @@ func (a *App) executeSelectedCmd() tea.Cmd {
 		return func() tea.Msg { return QueryErrorMsg{Err: fmt.Errorf("no statement selected")} }
 	}
 	a.lastSQL = sql
+	a.queryInFlight = true
 	ctx, cancel := context.WithCancel(context.Background())
 	a.cancel = cancel
 	return func() tea.Msg {
@@ -569,6 +571,10 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			a.toggleMainFocus()
 			return a, nil
 		case key.Matches(msg, style.Keys.Execute):
+			if a.queryInFlight {
+				a.status.SetError("A query is already running")
+				return a, nil
+			}
 			stmtInfo := ""
 			if a.preview.StmtCount() > 1 {
 				stmtInfo = fmt.Sprintf(" (stmt %d/%d)", a.preview.StmtIndex()+1, a.preview.StmtCount())
@@ -651,6 +657,7 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case QueryResultMsg:
 		a.cancel = nil
+		a.queryInFlight = false
 		a.results.SetResult(msg.Result)
 		rowLabel := fmt.Sprintf("%d", len(msg.Result.Rows))
 		if msg.Result.Truncated {
@@ -673,6 +680,7 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case QueryErrorMsg:
 		a.cancel = nil
+		a.queryInFlight = false
 		a.results.SetError(msg.Err.Error())
 		a.status.SetError("Query error: " + msg.Err.Error())
 		return a, nil
@@ -921,6 +929,7 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// If the result is truncated, re-run the query without limits.
 		if result.Truncated && a.lastSQL != "" && a.db != nil {
 			a.status.SetMessage("Exporting full result set...")
+			a.queryInFlight = true
 			d := a.db
 			sql := a.lastSQL
 			return a, func() tea.Msg {
@@ -962,10 +971,12 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, nil
 
 	case ExportDoneMsg:
+		a.queryInFlight = false
 		a.status.SetMessage("Exported to " + msg.Path)
 		return a, nil
 
 	case ExportErrorMsg:
+		a.queryInFlight = false
 		a.status.SetError("Export failed: " + msg.Err.Error())
 		return a, nil
 	}
