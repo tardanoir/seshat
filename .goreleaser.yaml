@@ -50,6 +50,9 @@ homebrew_casks:
   - repository:
       owner: tardanoir
       name: homebrew-tap
+      # The built-in GITHUB_TOKEN is scoped to this repo only; cross-repo
+      # pushes to the tap need the PAT the workflow passes in.
+      token: "{{ .Env.TAP_GITHUB_TOKEN }}"
     homepage: "https://github.com/tardanoir/seshat"
     description: "A lightweight TUI SQL client for PostgreSQL"
     license: "MIT"
@@ -84,6 +87,7 @@ scoops:
   - repository:
       owner: tardanoir
       name: scoop-bucket
+      token: "{{ .Env.TAP_GITHUB_TOKEN }}"
     homepage: "https://github.com/tardanoir/seshat"
     description: "A lightweight TUI SQL client for PostgreSQL"
     license: "MIT"
