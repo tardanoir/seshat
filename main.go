@@ -7,6 +7,8 @@ import (
 	"strings"
 
 	"github.com/tardanoir/seshat/internal/config"
+	"github.com/tardanoir/seshat/internal/selfupdate"
+	"github.com/tardanoir/seshat/internal/session"
 	"github.com/tardanoir/seshat/internal/ui"
 	"github.com/tardanoir/seshat/internal/ui/style"
 
@@ -19,9 +21,36 @@ var (
 	date    = "unknown"
 )
 
+const usage = `seshat - a terminal UI SQL client
+
+Usage:
+  seshat                 open with the default connection
+  seshat <file>          open a .csv, .json or .db file as a table
+  seshat update          upgrade to the latest release
+  seshat update --check  report whether an update is available
+  seshat --version       print the version
+  seshat --help          print this message
+`
+
 func main() {
-	if len(os.Args) > 1 && os.Args[1] == "--version" {
+	if len(os.Args) > 1 && (os.Args[1] == "--version" || os.Args[1] == "-v" || os.Args[1] == "version") {
 		fmt.Printf("seshat %s (%s) built %s\n", version, commit, date)
+		os.Exit(0)
+	}
+
+	if len(os.Args) > 1 && (os.Args[1] == "--help" || os.Args[1] == "-h" || os.Args[1] == "help") {
+		fmt.Print(usage)
+		os.Exit(0)
+	}
+
+	// "update" must be handled before the file argument below, which would
+	// otherwise try to open a file literally named "update".
+	if len(os.Args) > 1 && os.Args[1] == "update" {
+		checkOnly := len(os.Args) > 2 && (os.Args[2] == "--check" || os.Args[2] == "-n")
+		if _, err := selfupdate.Run(version, checkOnly, os.Stdout); err != nil {
+			fmt.Fprintf(os.Stderr, "seshat: %v\n", err)
+			os.Exit(1)
+		}
 		os.Exit(0)
 	}
 
@@ -34,6 +63,22 @@ func main() {
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "seshat: config error: %v\n", err)
 		os.Exit(1)
+	}
+
+	// Restore the session for this directory before the CLI args are applied,
+	// so an explicit file argument still wins over the remembered connection.
+	var (
+		sess       *session.Session
+		sessionDir string
+	)
+	if cfg.PersistSessions {
+		sessionDir = session.CurrentDir()
+		sess, _ = session.Load(sessionDir)
+		if sess != nil && sess.Connection != "" {
+			if _, ok := cfg.Connections[sess.Connection]; ok {
+				cfg.DefaultConnection = sess.Connection
+			}
+		}
 	}
 
 	// seshat + filePath will open the file
@@ -71,7 +116,7 @@ func main() {
 		AIGenerate:    cfg.Keys.AIGenerate,
 	})
 
-	app := ui.NewApp(cfg, version)
+	app := ui.NewApp(cfg, version, sess, sessionDir)
 	p := tea.NewProgram(app)
 	if _, err := p.Run(); err != nil {
 		fmt.Fprintf(os.Stderr, "seshat: %v\n", err)

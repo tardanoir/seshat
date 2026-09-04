@@ -96,6 +96,7 @@ func (m Model) View() string {
 		hints = []string{
 			hint("y", "cell"),
 			hint("Y", "row"),
+			hint("c", "col"),
 			hint("^x", "export"),
 			hint("^r", "run"),
 			hint("?", "help"),

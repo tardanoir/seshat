@@ -14,6 +14,7 @@ import (
 	"github.com/tardanoir/seshat/internal/db"
 	"github.com/tardanoir/seshat/internal/editor"
 	"github.com/tardanoir/seshat/internal/query"
+	"github.com/tardanoir/seshat/internal/session"
 	"github.com/tardanoir/seshat/internal/ssh"
 	"github.com/tardanoir/seshat/internal/ui/modal"
 	"github.com/tardanoir/seshat/internal/ui/queryeditor"
@@ -33,6 +34,14 @@ const (
 	FocusSidebar Focus = iota
 	FocusPreview
 	FocusResults
+)
+
+const (
+	// sidebarRuleRow is the pane row holding the sidebar's horizontal rule; it
+	// shifts every sidebar line below it down by one.
+	sidebarRuleRow = 3
+	// wheelStep is how many rows one wheel notch moves.
+	wheelStep = 3
 )
 
 type ModalState int
@@ -123,9 +132,15 @@ type App struct {
 
 	schemaTables    []queryeditor.TableRef
 	schemaColumnsBy map[string][]queryeditor.ColumnRef
+
+	// sessionDir is the working directory this session is keyed on; empty
+	// disables persistence.
+	sessionDir string
 }
 
-func NewApp(cfg *config.Config, ver string) App {
+// NewApp builds the root model. sess, when non-nil, is the state restored for
+// the current working directory; sessionDir keys where it will be written back.
+func NewApp(cfg *config.Config, ver string, sess *session.Session, sessionDir string) App {
 	s := sidebar.New()
 	p := queryeditor.New(cfg.VimMode)
 	r := resultstable.New()
@@ -140,6 +155,14 @@ func NewApp(cfg *config.Config, ver string) App {
 		}
 	}
 
+	sidebarVisible := true
+	if sess != nil {
+		if sess.Query != "" {
+			p.SetValue(sess.Query)
+		}
+		sidebarVisible = sess.SidebarVisible
+	}
+
 	return App{
 		cfg:            cfg,
 		sidebar:        s,
@@ -147,11 +170,27 @@ func NewApp(cfg *config.Config, ver string) App {
 		results:        r,
 		status:         st,
 		focus:          FocusPreview,
-		sidebarVisible: true,
+		sidebarVisible: sidebarVisible,
 		connName:       cfg.DefaultConnection,
 		version:        ver,
 		aiProvider:     aiProvider,
+		sessionDir:     sessionDir,
 	}
+}
+
+// saveSession writes the current editor buffer, connection and layout back to
+// the per-directory session file. Failures are silent: losing a restore point
+// should never interrupt the app.
+func (a *App) saveSession() {
+	if a.sessionDir == "" {
+		return
+	}
+	_ = session.Save(session.Session{
+		Dir:            a.sessionDir,
+		Query:          a.preview.Value(),
+		Connection:     a.connName,
+		SidebarVisible: a.sidebarVisible,
+	})
 }
 
 func (a *App) closeTunnel() {
@@ -497,6 +536,131 @@ func (a *App) toggleSidebarFocus() {
 	}
 }
 
+// ── Mouse ──────────────────────────────────────────────────
+//
+// Screen coordinates are mapped back onto the panes drawn by composeFrame. The
+// two must stay in step: row 0 is the top border, rows 1..mainH are pane rows,
+// and each panel's content starts 2 columns in (one padding column, one focus
+// bar).
+
+// panelContentInset is the padding column plus the focus bar that every panel
+// renders before its content.
+const panelContentInset = 2
+
+// paneHit describes which panel a screen coordinate landed on, with the
+// coordinates translated into that panel's own content space.
+type paneHit struct {
+	focus Focus
+	x, y  int
+	ok    bool
+}
+
+// editorRows is the number of pane rows the editor occupies. The horizontal
+// rule dividing it from the results sits on the row immediately below.
+func (a App) editorRows() int { return a.previewH - 1 }
+
+func (a App) paneAt(screenX, screenY int) paneHit {
+	if a.width == 0 || a.height == 0 {
+		return paneHit{}
+	}
+	// Rows 1..mainH are pane rows; everything else is chrome.
+	paneY := screenY - 1
+	if paneY < 0 || paneY >= a.mainH {
+		return paneHit{}
+	}
+
+	mainStart := 1
+	if a.sidebarVisible {
+		if screenX >= 1 && screenX <= a.sidebarW {
+			if paneY == sidebarRuleRow {
+				return paneHit{}
+			}
+			line := paneY
+			if paneY > sidebarRuleRow {
+				line--
+			}
+			return paneHit{focus: FocusSidebar, x: screenX - 1 - panelContentInset, y: line, ok: true}
+		}
+		mainStart = a.sidebarW + 2
+	}
+
+	if screenX < mainStart || screenX >= mainStart+a.mainW {
+		return paneHit{}
+	}
+	x := screenX - mainStart - panelContentInset
+
+	bottom := a.editorRows()
+	switch {
+	case paneY < bottom:
+		return paneHit{focus: FocusPreview, x: x, y: paneY, ok: true}
+	case paneY == bottom:
+		return paneHit{}
+	default:
+		return paneHit{focus: FocusResults, x: x, y: paneY - bottom - 1, ok: true}
+	}
+}
+
+func (a App) handleMouseClick(msg tea.MouseClickMsg) (tea.Model, tea.Cmd) {
+	if msg.Button != tea.MouseLeft {
+		return a, nil
+	}
+	hit := a.paneAt(msg.X, msg.Y)
+	if !hit.ok {
+		return a, nil
+	}
+	if a.focus != hit.focus {
+		a.setFocus(hit.focus)
+	}
+	switch hit.focus {
+	case FocusSidebar:
+		var cmd tea.Cmd
+		a.sidebar, cmd = a.sidebar.MouseClick(hit.y)
+		return a, cmd
+	case FocusResults:
+		a.results = a.results.MouseClick(hit.x, hit.y)
+	}
+	return a, nil
+}
+
+func (a App) handleMouseWheel(msg tea.MouseWheelMsg) (tea.Model, tea.Cmd) {
+	delta := 0
+	switch msg.Button {
+	case tea.MouseWheelUp:
+		delta = -wheelStep
+	case tea.MouseWheelDown:
+		delta = wheelStep
+	default:
+		return a, nil
+	}
+	// Scroll whatever is under the pointer, without stealing focus.
+	switch a.paneAt(msg.X, msg.Y).focus {
+	case FocusSidebar:
+		a.sidebar = a.sidebar.MouseWheel(delta)
+	case FocusResults:
+		a.results = a.results.MouseWheel(delta)
+	}
+	return a, nil
+}
+
+// insertTableIntoEditor appends a starter statement for the clicked table. It
+// never overwrites existing SQL — a stray click must not destroy a buffer.
+func (a *App) insertTableIntoEditor(schema, name string) {
+	ref := name
+	// Only qualify when the schema is meaningful: file-backed drivers report no
+	// schema, and "public." would be invalid SQL for them.
+	if schema != "" && schema != "public" {
+		ref = schema + "." + name
+	}
+	stmt := "select * from " + ref + ";"
+
+	if cur := a.preview.Value(); strings.TrimSpace(cur) != "" {
+		stmt = strings.TrimRight(cur, "\n") + "\n\n" + stmt
+	}
+	a.preview.SetValue(stmt)
+	a.setFocus(FocusPreview)
+	a.status.SetMessage("Added " + ref + " to the editor")
+}
+
 func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmds []tea.Cmd
 
@@ -520,8 +684,25 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.status.SetError("nvim exited — vim mode degraded to navigator")
 		return a, nil
 
+	case tea.MouseClickMsg:
+		if a.modalState != ModalNone {
+			return a, nil
+		}
+		return a.handleMouseClick(msg)
+
+	case tea.MouseWheelMsg:
+		if a.modalState != ModalNone {
+			return a, nil
+		}
+		return a.handleMouseWheel(msg)
+
+	case sidebar.SelectTableMsg:
+		a.insertTableIntoEditor(msg.Schema, msg.Name)
+		return a, nil
+
 	case tea.KeyMsg:
 		if key.Matches(msg, style.Keys.Quit) {
+			a.saveSession()
 			if a.db != nil {
 				a.db.Close(context.Background())
 			}
@@ -668,6 +849,8 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		a.status.SetResult(msg.Result.Duration.String(), rowLabel)
+		// Checkpoint the session so a crash doesn't lose the buffer.
+		a.saveSession()
 		// Record in history
 		go query.AddHistory(query.HistoryEntry{
 			SQL:        msg.SQL,
@@ -1064,6 +1247,7 @@ func (a App) View() tea.View {
 	view := func(s string) tea.View {
 		v := tea.NewView(s)
 		v.AltScreen = true
+		v.MouseMode = tea.MouseModeCellMotion
 		return v
 	}
 	if !a.ready {
