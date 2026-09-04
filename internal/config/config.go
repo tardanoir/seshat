@@ -33,6 +33,7 @@ type Config struct {
 	Editor            string                `toml:"editor"`
 	VimMode           bool                  `toml:"vim_mode"`
 	MaxRows           int                   `toml:"max_rows"`
+	PersistSessions   bool                  `toml:"persist_sessions"`
 	Connections       map[string]Connection `toml:"connections"`
 	Keys              Keybindings           `toml:"keybindings"`
 	AI                AIConfig              `toml:"ai"`
@@ -169,7 +170,7 @@ func ConfigDir() string {
 
 func Bootstrap() error {
 	base := ConfigDir()
-	for _, sub := range []string{"queries", "templates"} {
+	for _, sub := range []string{"queries", "templates", "sessions"} {
 		if err := os.MkdirAll(filepath.Join(base, sub), 0o755); err != nil {
 			return err
 		}
@@ -184,8 +185,12 @@ func Bootstrap() error {
 func Load() (*Config, error) {
 	cfgPath := filepath.Join(ConfigDir(), "config.toml")
 	var cfg Config
-	if _, err := toml.DecodeFile(cfgPath, &cfg); err != nil {
+	md, err := toml.DecodeFile(cfgPath, &cfg)
+	if err != nil {
 		return nil, fmt.Errorf("loading config: %w", err)
+	}
+	if !md.IsDefined("persist_sessions") {
+		cfg.PersistSessions = true
 	}
 	if cfg.Editor == "" {
 		cfg.Editor = os.Getenv("EDITOR")
@@ -235,6 +240,10 @@ const defaultConfig = `default_connection = "local"
 editor = "nvim"
 vim_mode = false
 # max_rows = 10000
+
+# Remember the editor buffer, connection and sidebar state per working
+# directory, and restore them the next time seshat starts there.
+persist_sessions = true
 
 [connections.local]
 host = "localhost"
