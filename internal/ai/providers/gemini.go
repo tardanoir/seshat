@@ -2,6 +2,7 @@ package providers
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -74,4 +75,58 @@ func (g *Gemini) Generate(ctx context.Context, req ai.Request) (ai.Response, err
 		Raw:      raw,
 		Provider: g.Name(),
 	}, nil
+}
+
+// ChatStream implements ai.ChatProvider with Gemini's streamGenerateContent (SSE).
+func (g *Gemini) ChatStream(ctx context.Context, req ai.ChatRequest) (<-chan ai.ChatChunk, error) {
+	if g.APIKey == "" {
+		return nil, errors.New("gemini: api_key not set")
+	}
+	endpoint := fmt.Sprintf(
+		"%s/models/%s:streamGenerateContent?alt=sse&key=%s",
+		g.BaseURL, g.Model, url.QueryEscape(g.APIKey),
+	)
+	contents := make([]map[string]any, 0, len(req.Messages))
+	for _, m := range req.Messages {
+		role := m.Role
+		switch role {
+		case "assistant":
+			role = "model"
+		case "system":
+			continue
+		}
+		contents = append(contents, map[string]any{
+			"role":  role,
+			"parts": []map[string]any{{"text": m.Content}},
+		})
+	}
+	body := map[string]any{
+		"systemInstruction": map[string]any{
+			"parts": []map[string]any{{"text": ai.ChatSystemPrompt + "\n\n" + ai.BuildChatContext(req)}},
+		},
+		"contents": contents,
+	}
+	// Gemini's SSE stream has no explicit terminator event; the body simply
+	// closes, which postSSE reports as Done.
+	return postSSE(ctx, endpoint, nil, body, func(data string) (string, bool, error) {
+		var ev struct {
+			Candidates []struct {
+				Content struct {
+					Parts []struct {
+						Text string `json:"text"`
+					} `json:"parts"`
+				} `json:"content"`
+			} `json:"candidates"`
+		}
+		if err := json.Unmarshal([]byte(data), &ev); err != nil {
+			return "", false, nil
+		}
+		text := ""
+		if len(ev.Candidates) > 0 {
+			for _, p := range ev.Candidates[0].Content.Parts {
+				text += p.Text
+			}
+		}
+		return text, false, nil
+	})
 }

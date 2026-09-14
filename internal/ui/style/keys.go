@@ -23,6 +23,7 @@ type KeyMap struct {
 	Up            key.Binding
 	Down          key.Binding
 	AIGenerate    key.Binding
+	AIChat        key.Binding
 }
 
 var Keys = KeyMap{
@@ -98,6 +99,10 @@ var Keys = KeyMap{
 		key.WithKeys("ctrl+a"),
 		key.WithHelp("C-a", "ai"),
 	),
+	AIChat: key.NewBinding(
+		key.WithKeys("ctrl+g"),
+		key.WithHelp("C-g", "ai chat"),
+	),
 }
 
 // Keybindings mirrors config.Keybindings to avoid import cycle.
@@ -116,6 +121,7 @@ type Keybindings struct {
 	Delete        string
 	Suspend       string
 	AIGenerate    string
+	AIChat        string
 }
 
 func ApplyKeybindings(kb Keybindings) {
@@ -138,4 +144,5 @@ func ApplyKeybindings(kb Keybindings) {
 	apply(&Keys.Delete, kb.Delete)
 	apply(&Keys.Suspend, kb.Suspend)
 	apply(&Keys.AIGenerate, kb.AIGenerate)
+	apply(&Keys.AIChat, kb.AIChat)
 }

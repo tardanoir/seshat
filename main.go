@@ -69,6 +69,7 @@ func main() {
 		Delete:        cfg.Keys.Delete,
 		Suspend:       cfg.Keys.Suspend,
 		AIGenerate:    cfg.Keys.AIGenerate,
+		AIChat:        cfg.Keys.AIChat,
 	})
 
 	app := ui.NewApp(cfg, version)
