@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.2.0] - 2026-09-04
+
+### Added
+- Persistent per-directory sessions: the editor buffer, active connection and sidebar state are restored when you reopen seshat in the same directory. Saved on quit and after every query; disable with `persist_sessions = false`
+- `c` in the results panel copies the whole column under the cursor to the clipboard, one value per line
+- `seshat update` self-updater: downloads the release for your platform, verifies its SHA-256 against the published `checksums.txt`, then swaps the binary in place. `seshat update --check` reports without installing; package-manager installs are refused with guidance instead
+- Mouse support: click to focus a panel, click a sidebar table to append `select * from <table>;` to the editor, click a results cell to move the cursor, scroll with the wheel
+- `seshat --help` usage output
+
 ## [0.5.0] - 2026-04-23
 
 ### Added

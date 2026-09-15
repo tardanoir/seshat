@@ -69,12 +69,21 @@ func (m HelpModel) View() string {
 		row("PgUp/PgDn", "Page up/down"),
 		row("y", "Copy cell to clipboard"),
 		row("Y", "Copy row to clipboard"),
+		row("c", "Copy column to clipboard"),
 		"",
 		style.Label.Render("Sidebar"),
 		row("1-4", "Switch section"),
 		row("/", "Search entries"),
 		row("Enter", "Select item"),
 		row("Ctrl+D", "Delete query"),
+		"",
+		style.Label.Render("Mouse"),
+		row("Click", "Focus a panel"),
+		row("Click table", "Add SELECT to editor"),
+		row("Wheel", "Scroll results / sidebar"),
+		"",
+		style.Label.Render("Updating"),
+		row("seshat update", "Get the latest release"),
 	}
 
 	content := strings.Join(sections, "\n")

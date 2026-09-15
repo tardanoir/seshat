@@ -20,6 +20,10 @@ If you find Seshat useful, consider buying me a coffee:
 - **Schema browser** - collapsible sidebar with tables and columns
 - **Multiple connections** - switch between configured PostgreSQL instances
 - **File support** - Open your csv and json files and query them like SQL tables
+- **Persistent sessions** - Your editor buffer, connection and layout are remembered per directory
+- **Clipboard copy** - Copy a cell, a row, or a whole column straight out of the results table
+- **Mouse support** - Click to focus a panel, click a table to drop a `SELECT` into the editor, scroll with the wheel
+- **Self-update** - `seshat update` pulls the latest release and verifies its checksum before installing
 
 ## Elevator Pitch
 
@@ -136,6 +140,7 @@ Config lives at `~/.config/seshat/config.toml`. A default one is created on firs
 ```toml
 default_connection = "local"
 editor = "nvim"  # falls back to $EDITOR, then "vi"
+persist_sessions = true  # remember state per directory; defaults to true
 
 [connections.local]
 host = "localhost"
@@ -201,8 +206,23 @@ Variables use `{{name}}` syntax and are substituted before execution.
 | Tab | Cycle focus (sidebar / preview / results) |
 | j/k | Navigate within focused panel |
 | 1/2/3 | Switch sidebar section (queries/templates/tables) |
+| y | Copy the cell under the cursor (results panel) |
+| Y | Copy the whole row, tab-separated (results panel) |
+| c | Copy the whole column, one value per line (results panel) |
 | Ctrl+D | Delete selected query |
 | Ctrl+C | Quit |
+
+Mouse (no configuration needed):
+
+| Action | Result |
+|---|---|
+| Click a panel | Focus it |
+| Click a table in the sidebar | Append `select * from <table>;` to the editor and focus it |
+| Click a section title | Switch sidebar section |
+| Click a results cell | Move the cell cursor there |
+| Scroll wheel | Scroll the results or sidebar under the pointer |
+
+Clicking a table never overwrites the editor — the statement is appended below whatever is already there. Expanding a table's columns stays on `Enter`.
 
 All keybindings are configurable via `config.toml`:
 
@@ -222,6 +242,41 @@ delete = "ctrl+d"
 
 Only include the keys you want to override — unset keys use the defaults above.
 
+## Updating
+
+```sh
+seshat update          # download and install the latest release
+seshat update --check  # just report whether one is available
+```
+
+The updater resolves the release asset for your OS and architecture, verifies its
+SHA-256 against the published `checksums.txt`, and only then swaps the binary in
+place (the old one is moved aside first and restored if the swap fails).
+
+If seshat lives somewhere you can't write — a system prefix, or a package-manager
+install — it stops before downloading and tells you to upgrade the way you
+installed it (`brew upgrade`, `pacman -Syu`, `apt upgrade`, `scoop update seshat`).
+
+Separately, seshat checks GitHub for a newer release at most once every 24h and
+shows a `vX.Y.Z available` pill in the status bar.
+
+## Sessions
+
+Seshat remembers what you were doing in each directory. When you quit — and after
+every query you run — the editor buffer, the active connection and the sidebar
+state are written to a session file keyed on the current working directory. Start
+seshat in that directory again and you pick up where you left off.
+
+Sessions are keyed on the resolved working directory, so `~/work/api` and
+`~/work/etl` keep separate buffers, and reopening either one restores only its own.
+
+A connection passed on the command line still wins: `seshat data.csv` opens the
+file, but the buffer from the last session in that directory is still restored.
+
+Turn it off with `persist_sessions = false` in `config.toml`. Session files live in
+`~/.config/seshat/sessions/` and can be deleted at any time — a missing one just
+means seshat starts fresh in that directory.
+
 ## Directory Layout
 
 ```
@@ -231,6 +286,8 @@ Only include the keys you want to override — unset keys use the defaults above
     my_query.sql
   templates/
     get_user.sql
+  sessions/
+    api-3f9a1c7b2d4e.json
 ```
 
 

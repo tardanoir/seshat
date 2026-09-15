@@ -307,11 +307,96 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 					return CopiedToClipboardMsg{Label: "row", Err: err}
 				}
 			}
+		case "c":
+			if m.cursorX < len(m.result.Columns) {
+				col := m.columnValues(m.cursorX)
+				return m, func() tea.Msg {
+					err := clipboard.WriteAll(col)
+					return CopiedToClipboardMsg{Label: "column", Err: err}
+				}
+			}
 		}
 		m.clampScroll()
 	}
 
 	return m, nil
+}
+
+// ── Mouse ──────────────────────────────────────────────────
+
+// MouseClick moves the cell cursor to the clicked position. x and y are
+// relative to the panel's content area; the layout is one header line, one
+// column-header line, then the data rows.
+func (m Model) MouseClick(x, y int) Model {
+	if m.empty || m.result == nil {
+		return m
+	}
+	const headerRows = 2 // panel header + column headers
+	row := y - headerRows + m.scrollY
+	if row >= 0 && row < len(m.cells) {
+		m.cursorY = row
+	}
+	if col, ok := m.columnAtX(x + m.scrollX); ok {
+		m.cursorX = col
+	}
+	m.ensureCursorVisible()
+	m.ensureColumnVisible()
+	m.clampScroll()
+	return m
+}
+
+// columnAtX maps a horizontal offset in the full (unscrolled) row to a column.
+func (m Model) columnAtX(x int) (int, bool) {
+	if x < 0 {
+		return 0, false
+	}
+	pos := 0
+	for i, w := range m.colWidths {
+		if x < pos+w {
+			return i, true
+		}
+		pos += w + 3
+		if x < pos {
+			// Inside the gutter between two columns — treat it as the left one.
+			return i, true
+		}
+	}
+	return 0, false
+}
+
+// MouseWheel scrolls the rows by delta (positive scrolls down), carrying the
+// cursor along so the selection stays on screen.
+func (m Model) MouseWheel(delta int) Model {
+	if m.empty || m.result == nil {
+		return m
+	}
+	m.cursorY += delta
+	if m.cursorY < 0 {
+		m.cursorY = 0
+	}
+	if m.cursorY > len(m.cells)-1 {
+		m.cursorY = len(m.cells) - 1
+	}
+	m.ensureCursorVisible()
+	m.clampScroll()
+	return m
+}
+
+// columnValues joins every raw value in the given column, one per line, so the
+// result pastes straight into a spreadsheet or an IN (...) list.
+func (m Model) columnValues(col int) string {
+	var sb strings.Builder
+	for i, row := range m.result.Rows {
+		if i > 0 {
+			sb.WriteByte('\n')
+		}
+		// A short row still emits its line, so line N of the clipboard always
+		// lines up with row N on screen.
+		if col < len(row) {
+			sb.WriteString(row[col])
+		}
+	}
+	return sb.String()
 }
 
 func (m Model) buildRow(cells []string) string {

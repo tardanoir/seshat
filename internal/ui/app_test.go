@@ -28,7 +28,7 @@ func TestHistoryKeyOpensPickerFromAnyFocus(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			a := NewApp(cfg, "test")
+			a := NewApp(cfg, "test", nil, "")
 			a.focus = tc.focus
 
 			m, _ := a.Update(ctrlH)

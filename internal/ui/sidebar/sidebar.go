@@ -17,6 +17,10 @@ type SelectHistoryMsg struct{ SQL string }
 type DeleteQueryMsg struct{ Name string }
 type RequestColumnsMsg struct{ Schema, TableName string }
 
+// SelectTableMsg is emitted when a table row is clicked, so the app can drop a
+// starter statement for it into the editor.
+type SelectTableMsg struct{ Schema, Name string }
+
 type ColumnDef struct {
 	Name     string
 	DataType string
@@ -328,6 +332,158 @@ func (m Model) handleDelete() (Model, tea.Cmd) {
 		}
 	}
 	return m, nil
+}
+
+// ── Mouse ──────────────────────────────────────────────────
+//
+// The helpers below map a click on a rendered line back to an item. They mirror
+// View's layout math (header lines, one title line per section, the active
+// section's scrolled body); the two must change together.
+
+// headerLines is the CONNECTION block above the section list.
+const headerLines = 3
+
+// bodyGeometry returns the first content line of the active section's body, how
+// many lines it spans, and the scroll offset View would render it with.
+func (m Model) bodyGeometry() (start, bodyH, scrollY int) {
+	innerH := m.height
+	if innerH < 5 {
+		innerH = 5
+	}
+	bodyH = innerH - (headerLines + int(sectionCount))
+	if bodyH < 1 {
+		bodyH = 1
+	}
+	start = headerLines + int(m.activeSection) + 1
+
+	bodyLines := m.buildSectionLines(m.activeSection, m.innerWidth())
+	curVL := m.cursorToVisualLine(m.activeSection)
+	scrollY = m.scrollY
+	if curVL < scrollY {
+		scrollY = curVL
+	}
+	if curVL >= scrollY+bodyH {
+		scrollY = curVL - bodyH + 1
+	}
+	if scrollY < 0 {
+		scrollY = 0
+	}
+	maxScroll := len(bodyLines) - bodyH
+	if maxScroll < 0 {
+		maxScroll = 0
+	}
+	if scrollY > maxScroll {
+		scrollY = maxScroll
+	}
+	return start, bodyH, scrollY
+}
+
+// sectionTitleLine returns the content line the given section's title sits on.
+func (m Model) sectionTitleLine(sec Section) int {
+	_, bodyH, _ := m.bodyGeometry()
+	line := headerLines + int(sec)
+	if sec > m.activeSection {
+		line += bodyH
+	}
+	return line
+}
+
+// visualLineToCursor is the inverse of cursorToVisualLine.
+func (m Model) visualLineToCursor(sec Section, vl int) (int, bool) {
+	if vl < 0 {
+		return 0, false
+	}
+	if sec != SectionTables {
+		if vl >= m.sectionItemCount(sec) {
+			return 0, false
+		}
+		return vl, true
+	}
+	visualLine, idx := 0, 0
+	for _, ti := range m.visibleTableIdx() {
+		if visualLine == vl {
+			return idx, true
+		}
+		visualLine++
+		idx++
+		if m.tables[ti].Expanded {
+			for range m.tables[ti].Columns {
+				if visualLine == vl {
+					return idx, true
+				}
+				visualLine++
+				idx++
+			}
+		}
+	}
+	return 0, false
+}
+
+// TableAt reports the table at the given cursor index, or ok=false when that
+// index addresses one of a table's expanded columns instead.
+func (m Model) TableAt(cursor int) (schema, name string, ok bool) {
+	idx := 0
+	for _, ti := range m.visibleTableIdx() {
+		if idx == cursor {
+			return m.tables[ti].Schema, m.tables[ti].Name, true
+		}
+		idx++
+		if m.tables[ti].Expanded {
+			for range m.tables[ti].Columns {
+				if idx == cursor {
+					return "", "", false
+				}
+				idx++
+			}
+		}
+	}
+	return "", "", false
+}
+
+// MouseClick handles a click on the given content line. Clicking a section
+// title activates that section; clicking a row selects it, and clicking a table
+// row sends a starter statement to the editor. Expanding a table stays on Enter
+// so a click has one unambiguous meaning.
+func (m Model) MouseClick(line int) (Model, tea.Cmd) {
+	for sec := Section(0); sec < sectionCount; sec++ {
+		if line == m.sectionTitleLine(sec) {
+			if sec != m.activeSection {
+				m.switchSection(sec)
+			}
+			return m, nil
+		}
+	}
+
+	start, bodyH, scrollY := m.bodyGeometry()
+	if line < start || line >= start+bodyH {
+		return m, nil
+	}
+	cursor, ok := m.visualLineToCursor(m.activeSection, line-start+scrollY)
+	if !ok {
+		return m, nil
+	}
+	m.cursor = cursor
+
+	if m.activeSection == SectionTables {
+		if schema, name, isTable := m.TableAt(cursor); isTable {
+			return m, func() tea.Msg { return SelectTableMsg{Schema: schema, Name: name} }
+		}
+		return m, nil
+	}
+	return m.handleEnter()
+}
+
+// MouseWheel moves the selection by delta rows (positive scrolls down).
+func (m Model) MouseWheel(delta int) Model {
+	for ; delta > 0; delta-- {
+		m.moveDown()
+	}
+	for ; delta < 0; delta++ {
+		if m.cursor > 0 {
+			m.cursor--
+		}
+	}
+	return m
 }
 
 const hPadTotal = 3
