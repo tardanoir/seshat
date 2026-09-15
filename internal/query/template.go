@@ -24,9 +24,9 @@ type TemplateVar struct {
 }
 
 type templateFrontmatter struct {
-	Name        string                  `toml:"name"`
-	Description string                  `toml:"description"`
-	Variables   map[string]TemplateVar  `toml:"variables"`
+	Name        string                 `toml:"name"`
+	Description string                 `toml:"description"`
+	Variables   map[string]TemplateVar `toml:"variables"`
 }
 
 var varPattern = regexp.MustCompile(`\{\{(\w+)\}\}`)
